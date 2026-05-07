@@ -42,7 +42,6 @@ public enum RobloxAppCopier {
         case infoPlistReadFailed(underlying: String)
         case infoPlistWriteFailed(underlying: String)
         case supportDirCreationFailed(underlying: String)
-        case adhocSignFailed(underlying: String)
     }
 
     /// Resolve `~/Library/Application Support/RORORO/instances/`. Creates
@@ -105,14 +104,15 @@ public enum RobloxAppCopier {
         let plistURL = destURL.appendingPathComponent("Contents/Info.plist", isDirectory: false)
         try flipMultipleInstancesProhibited(at: plistURL)
 
-        // Editing Info.plist invalidated the original code signature.
-        // Gatekeeper refuses to launch a modified signed app — the user
-        // sees "The application '<uuid>.app' can't be opened." Re-sign
-        // ad-hoc (no developer cert needed; the user is explicitly
-        // launching from our private support dir) and strip any
-        // inherited quarantine xattr so the launch is clean.
+        // Strip any inherited quarantine xattr — without this the OS may
+        // present "downloaded from the internet" prompts for the copy.
+        // We deliberately do NOT re-sign the copy. v0.1.1 tried ad-hoc
+        // re-sign (`codesign --force --deep --sign -`) and it broke
+        // Roblox's launch — the Hardened Runtime + library-validation
+        // surface needs the original Apple-issued signature OR no
+        // signature pretense at all. The Insadem Go reference doesn't
+        // re-sign and works; matching that here.
         try removeQuarantine(at: destURL)
-        try resignAdHoc(at: destURL)
 
         return destURL
     }
@@ -154,33 +154,6 @@ public enum RobloxAppCopier {
         // not a failure. We just don't surface it.
         try? task.run()
         task.waitUntilExit()
-    }
-
-    /// Re-sign the copy with an ad-hoc signature (`-` identity).
-    /// Ad-hoc signing is enough for Gatekeeper to launch a user-installed
-    /// app from a non-system path. The user is explicitly launching from
-    /// our controlled `~/Library/Application Support/RORORO/instances/`,
-    /// so we don't need a Developer ID cert here.
-    private static func resignAdHoc(at appURL: URL) throws {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        // --deep walks nested binaries (Roblox bundles helpers + frameworks);
-        // --force replaces the existing (now-broken) Apple signature.
-        task.arguments = ["--force", "--deep", "--sign", "-", appURL.path]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = pipe
-        do {
-            try task.run()
-        } catch {
-            throw CopyError.adhocSignFailed(underlying: error.localizedDescription)
-        }
-        task.waitUntilExit()
-        if task.terminationStatus != 0 {
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let msg = String(data: data, encoding: .utf8) ?? "exit \(task.terminationStatus)"
-            throw CopyError.adhocSignFailed(underlying: msg)
-        }
     }
 
     private static func flipMultipleInstancesProhibited(at plistURL: URL) throws {

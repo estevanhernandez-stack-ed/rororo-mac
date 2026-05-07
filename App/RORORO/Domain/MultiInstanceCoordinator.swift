@@ -136,11 +136,39 @@ public final class MultiInstanceCoordinator {
     }
 
     nonisolated private static func openRoblox(at appURL: URL, with url: URL) async throws {
-        let cfg = NSWorkspace.OpenConfiguration()
-        // createsNewApplicationInstance is critical: without it,
-        // NSWorkspace can decide an existing instance suffices and skip
-        // spawning a new process.
-        cfg.createsNewApplicationInstance = true
-        _ = try await NSWorkspace.shared.open([url], withApplicationAt: appURL, configuration: cfg)
+        // Two ways to launch a copy with a URL on macOS:
+        //   (a) NSWorkspace.shared.open([url], withApplicationAt: copy, configuration:
+        //       { createsNewApplicationInstance = true })
+        //   (b) /usr/bin/open -n -a <copy> <url>
+        //
+        // (a) is the Cocoa idiom, but in v0.1.1 it surfaced "The application
+        // '<uuid>.app' can't be opened." against fresh per-instance copies
+        // even with createsNewApplicationInstance=true. LaunchServices' URL-
+        // handler resolution prefers a registered .app for the bundle ID
+        // (Roblox's bundle ID) and ignores the explicit copy URL in some
+        // configs.
+        //
+        // (b) is what the Insadem Go reference uses and is the de-facto
+        // standard for the multi-instance technique on macOS — `-n` forces
+        // a new instance, `-a <path>` pins to the copy at the exact path,
+        // and the trailing URL is handed off to that .app's URL handler.
+
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = ["-n", "-a", appURL.path, url.absoluteString]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = pipe
+        try task.run()
+        task.waitUntilExit()
+        if task.terminationStatus != 0 {
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let msg = String(data: data, encoding: .utf8) ?? "exit \(task.terminationStatus)"
+            throw NSError(
+                domain: "MultiInstanceCoordinator",
+                code: Int(task.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: "open -n -a failed: \(msg)"]
+            )
+        }
     }
 }
