@@ -121,13 +121,37 @@ echo "==> [5/8] Staple the notary ticket onto the .app"
 xcrun stapler staple "$APP_PATH"
 xcrun stapler validate "$APP_PATH"
 
-echo "==> [6/8] Build a notarized DMG"
+echo "==> [6/8] Build a DMG from the stapled .app"
 hdiutil create \
   -volname RORORO \
   -srcfolder "$EXPORT_DIR" \
   -ov \
   -format UDZO \
   "$DMG_PATH"
+
+echo "==> [6.5/8] Submit the DMG to the notary service"
+# The .app's notary ticket lives inside the .app and survives DMG copy,
+# but the DMG envelope itself also needs a ticket so first-mount Gatekeeper
+# checks pass without a network round-trip. Submit + wait + staple.
+DMG_SUBMIT_OUTPUT="$(xcrun notarytool submit "$DMG_PATH" \
+  --apple-id "$APPLE_ID" \
+  --team-id "$APPLE_TEAM_ID" \
+  --password "$APPLE_NOTARY_PASSWORD" \
+  --wait 2>&1)"
+echo "$DMG_SUBMIT_OUTPUT"
+DMG_STATUS="$(echo "$DMG_SUBMIT_OUTPUT" | sed -nE 's/^[[:space:]]*status:[[:space:]]+(.+)$/\1/p' | tail -n 1)"
+DMG_SUBMISSION_ID="$(echo "$DMG_SUBMIT_OUTPUT" | sed -nE 's/^[[:space:]]*id:[[:space:]]+([a-f0-9-]+).*/\1/p' | head -n 1)"
+
+if [[ "$DMG_STATUS" != "Accepted" ]]; then
+  echo "::error::DMG notarization status is '$DMG_STATUS' (id=$DMG_SUBMISSION_ID)."
+  if [[ -n "$DMG_SUBMISSION_ID" ]]; then
+    xcrun notarytool log "$DMG_SUBMISSION_ID" \
+      --apple-id "$APPLE_ID" \
+      --team-id "$APPLE_TEAM_ID" \
+      --password "$APPLE_NOTARY_PASSWORD" || true
+  fi
+  exit 1
+fi
 
 echo "==> [7/8] Staple the DMG"
 xcrun stapler staple "$DMG_PATH"
