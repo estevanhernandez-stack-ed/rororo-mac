@@ -23,6 +23,11 @@ struct ROROROApp: App {
                     // willTerminate restore hook, kicks off stale-instance
                     // cleanup. Idempotent.
                     MultiInstanceCoordinator.shared.bootIfNeeded()
+                    // Install the menu-bar tray icon. Deferred to .onAppear
+                    // (never .init()) per the macRo NSEvent-monitor trap —
+                    // AppKit-side surfaces install after the first window
+                    // is on-screen.
+                    TrayController.shared.install()
                 }
                 .onOpenURL { url in
                     // Routed when the user clicks Play on roblox.com or
@@ -31,19 +36,5 @@ struct ROROROApp: App {
                 }
         }
         .windowResizability(.contentSize)
-    }
-}
-
-/// Phase 0/3 placeholder — Phase 5 builds out the real UI (account list,
-/// tray, settings, diagnostics).
-struct ContentView: View {
-    var body: some View {
-        VStack(spacing: 12) {
-            Text("RORORO")
-                .font(.largeTitle)
-            Text("Mac-native multi-Roblox launcher")
-                .foregroundStyle(.secondary)
-        }
-        .padding()
     }
 }
