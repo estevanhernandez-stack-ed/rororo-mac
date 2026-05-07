@@ -33,7 +33,7 @@ final class RobloxAppCopierTests: XCTestCase {
 
     // MARK: - copyAppForInstance against fake app
 
-    func testCopyAppForInstance_FlipsLSMultipleInstancesProhibitedToFalse() throws {
+    func testCopyAppForInstance_PreservesOriginalSignatureUntouched() throws {
         let copy = try RobloxAppCopier.copyAppForInstance(
             sourceAppPath: fakeAppURL.path,
             supportDirOverride: tempRoot
@@ -43,15 +43,37 @@ final class RobloxAppCopierTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: copy.path))
         XCTAssertNotEqual(copy, fakeAppURL, "destination should be a copy, not the source")
 
+        // Info.plist should match source — no modifications at copy time.
+        // Modifying before `open -n -a` would invalidate cdhash; amfid
+        // refuses Hardened Runtime apps with broken signatures.
         let plistURL = copy.appendingPathComponent("Contents/Info.plist", isDirectory: false)
         let data = try Data(contentsOf: plistURL)
         let plist = try PropertyListSerialization.propertyList(
             from: data, options: [], format: nil
         ) as? [String: Any]
 
-        XCTAssertEqual(plist?["LSMultipleInstancesProhibited"] as? Bool, false)
-        // Other keys preserved.
+        XCTAssertEqual(
+            plist?["LSMultipleInstancesProhibited"] as? Bool, true,
+            "fixture set this true; copy must preserve until post-launch flip"
+        )
         XCTAssertEqual(plist?["CFBundleIdentifier"] as? String, "com.test.fakeroblox")
+    }
+
+    func testSetMultipleInstancesProhibitionPostLaunch_FlipsValue() throws {
+        let copy = try RobloxAppCopier.copyAppForInstance(
+            sourceAppPath: fakeAppURL.path,
+            supportDirOverride: tempRoot
+        )
+        defer { try? FileManager.default.removeItem(at: copy) }
+
+        try RobloxAppCopier.setMultipleInstancesProhibitionPostLaunch(at: copy, prohibited: false)
+
+        let plistURL = copy.appendingPathComponent("Contents/Info.plist", isDirectory: false)
+        let data = try Data(contentsOf: plistURL)
+        let plist = try PropertyListSerialization.propertyList(
+            from: data, options: [], format: nil
+        ) as? [String: Any]
+        XCTAssertEqual(plist?["LSMultipleInstancesProhibited"] as? Bool, false)
     }
 
     func testCopyAppForInstance_SourceMissing_Throws() {
@@ -135,13 +157,12 @@ final class RobloxAppCopierTests: XCTestCase {
         let copy = try RobloxAppCopier.copyAppForInstance(supportDirOverride: tempRoot)
         defer { try? FileManager.default.removeItem(at: copy) }
 
+        // Copy exists and Info.plist is preserved as-shipped.
+        // Post-launch flip happens in MultiInstanceCoordinator after open -n -a.
         XCTAssertTrue(FileManager.default.fileExists(atPath: copy.path))
-        let plistURL = copy.appendingPathComponent("Contents/Info.plist", isDirectory: false)
-        let data = try Data(contentsOf: plistURL)
-        let plist = try PropertyListSerialization.propertyList(
-            from: data, options: [], format: nil
-        ) as? [String: Any]
-        XCTAssertEqual(plist?["LSMultipleInstancesProhibited"] as? Bool, false)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: copy.appendingPathComponent("Contents/Info.plist").path
+        ))
     }
 
     // MARK: - Helpers

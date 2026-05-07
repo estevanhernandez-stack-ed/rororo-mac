@@ -116,12 +116,25 @@ public final class MultiInstanceCoordinator {
         }
 
         do {
+            // Ordering matches Insadem's working Go reference. Modifying
+            // Info.plist BEFORE the open call invalidates the bundle's
+            // cdhash; macOS amfid then refuses the spawn (Hardened Runtime
+            // fails closed) → "Launchd job spawn failed" (caught at v0.1.3).
+            // Steps:
+            //   1. Copy app (signature intact, plist not yet modified).
+            //   2. sem_unlink → kernel-level singleton check cleared.
+            //   3. open -n -a → spawn the copy with intact signature; the
+            //      running process snapshots Info.plist into memory.
+            //   4. NOW modify Info.plist (defensive housekeeping for any
+            //      subsequent relaunch of this same copy; doesn't affect
+            //      the already-running process).
+            //   5. sem_unlink again — race buffer if Roblox-on-launch
+            //      recreated the semaphore between our first sem_unlink
+            //      and the process spawn.
             let copy = try RobloxAppCopier.copyAppForInstance()
             _ = SemaphoreBreaker.breakRobloxSingleton()
             try await openRoblox(at: copy, with: url)
-            // Race-buffer break: covers the case where Roblox-on-launch
-            // recreates the semaphore between our first sem_unlink and the
-            // process spawn (real on slow disks).
+            try? RobloxAppCopier.setMultipleInstancesProhibitionPostLaunch(at: copy)
             _ = SemaphoreBreaker.breakRobloxSingleton()
             await MainActor.run {
                 MultiInstanceState.shared.instanceCount += 1

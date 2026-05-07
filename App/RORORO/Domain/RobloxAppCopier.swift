@@ -75,10 +75,23 @@ public enum RobloxAppCopier {
         return instances
     }
 
-    /// Copy `/Applications/Roblox.app` into `instances/<uuid>.app/`, flip
-    /// `LSMultipleInstancesProhibited`, and return the copy URL. Caller is
-    /// responsible for handing the copy to NSWorkspace + `roblox-player:`
-    /// URL via MultiInstanceCoordinator's recipe.
+    /// Copy `/Applications/Roblox.app` into `instances/<uuid>.app/` with
+    /// the original Apple signature INTACT (no Info.plist edits yet) and
+    /// return the copy URL.
+    ///
+    /// CRITICAL ORDERING: Info.plist must NOT be modified before the
+    /// caller invokes `open -n -a`. Modifying Info.plist invalidates the
+    /// bundle's cdhash; macOS's amfid then refuses to spawn the process
+    /// (Hardened Runtime fails closed) and the user sees
+    /// "Launchd job spawn failed" (caught at v0.1.3 manual smoke).
+    ///
+    /// Caller flow (mirrored from the Insadem Go reference):
+    ///   1. let copy = copyAppForInstance()        // signature intact
+    ///   2. SemaphoreBreaker.breakRobloxSingleton()
+    ///   3. open -n -a <copy> <url>                 // launches now
+    ///   4. setMultipleInstancesProhibition(at: copy, false)
+    ///                                              // post-launch; defensive
+    ///   5. SemaphoreBreaker.breakRobloxSingleton() // race buffer
     public static func copyAppForInstance(
         sourceAppPath: String = robloxAppPath,
         supportDirOverride: URL? = nil
@@ -105,21 +118,23 @@ public enum RobloxAppCopier {
             throw CopyError.copyFailed(underlying: error.localizedDescription)
         }
 
-        // Flip LSMultipleInstancesProhibited on the copy's Info.plist.
-        let plistURL = destURL.appendingPathComponent("Contents/Info.plist", isDirectory: false)
-        try flipMultipleInstancesProhibited(at: plistURL)
-
-        // Strip any inherited quarantine xattr — without this the OS may
-        // present "downloaded from the internet" prompts for the copy.
-        // We deliberately do NOT re-sign the copy. v0.1.1 tried ad-hoc
-        // re-sign (`codesign --force --deep --sign -`) and it broke
-        // Roblox's launch — the Hardened Runtime + library-validation
-        // surface needs the original Apple-issued signature OR no
-        // signature pretense at all. The Insadem Go reference doesn't
-        // re-sign and works; matching that here.
+        // Strip any inherited quarantine xattr.
         try removeQuarantine(at: destURL)
 
         return destURL
+    }
+
+    /// Flip `LSMultipleInstancesProhibited` on the copy's Info.plist.
+    /// Call AFTER `open -n -a` has been issued — modifying the plist
+    /// before launch invalidates the cdhash and amfid refuses the spawn.
+    /// Defensive housekeeping for any future re-launch of this exact
+    /// copy; in practice each launch creates a fresh copy.
+    public static func setMultipleInstancesProhibitionPostLaunch(
+        at appURL: URL,
+        prohibited: Bool = false
+    ) throws {
+        let plistURL = appURL.appendingPathComponent("Contents/Info.plist", isDirectory: false)
+        try flipMultipleInstancesProhibited(at: plistURL, prohibited: prohibited)
     }
 
     /// Remove instance copies older than `olderThan` seconds (default 24h).
@@ -161,7 +176,7 @@ public enum RobloxAppCopier {
         task.waitUntilExit()
     }
 
-    private static func flipMultipleInstancesProhibited(at plistURL: URL) throws {
+    private static func flipMultipleInstancesProhibited(at plistURL: URL, prohibited: Bool = false) throws {
         let data: Data
         do {
             data = try Data(contentsOf: plistURL)
@@ -184,7 +199,7 @@ public enum RobloxAppCopier {
             throw CopyError.infoPlistReadFailed(underlying: "Info.plist root is not a dictionary")
         }
 
-        plist["LSMultipleInstancesProhibited"] = false
+        plist["LSMultipleInstancesProhibited"] = prohibited
 
         let outData: Data
         do {
