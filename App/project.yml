@@ -1,0 +1,83 @@
+# XcodeGen source-of-truth for the RORORO Mac app.
+# Regenerate the .xcodeproj after editing this file:
+#
+#   cd App && xcodegen generate
+#
+# The generated RORORO.xcodeproj/ is gitignored. This file is the source of truth.
+
+name: RORORO
+options:
+  bundleIdPrefix: com.626labs
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+  groupSortPosition: top
+  developmentLanguage: en
+
+# Swift Package Manager dependencies. Sparkle 2.x lands at Phase 6.
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    ARCHS: "arm64 x86_64"
+    # Hardened Runtime for notarized Release builds; off in Debug for dev iteration.
+    ENABLE_HARDENED_RUNTIME: YES
+    CLANG_ENABLE_MODULES: YES
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
+    GCC_TREAT_WARNINGS_AS_ERRORS: NO
+    DEAD_CODE_STRIPPING: YES
+    # Manual signing with the Developer ID Application cert — works for both
+    # dev (cmd+R) and release (notarized DMG). Same posture as macRo: stable
+    # cert across rebuilds keeps macOS TCC from re-prompting on every cmd+R.
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "Developer ID Application"
+    DEVELOPMENT_TEAM: "82BSR56X5J"
+    PROVISIONING_PROFILE_SPECIFIER: ""
+  configs:
+    # Debug host-only — keeps SPM rebuilds tractable; Release stays Universal
+    # so the notarized DMG lands as a fat binary.
+    Debug:
+      ONLY_ACTIVE_ARCH: YES
+      ENABLE_HARDENED_RUNTIME: NO
+    Release:
+      ONLY_ACTIVE_ARCH: NO
+
+targets:
+  RORORO:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: RORORO
+        excludes:
+          - "Info.plist"
+          - "RORORO.entitlements"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.626labs.rororo-mac
+        PRODUCT_NAME: RORORO
+        MARKETING_VERSION: "0.0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        INFOPLIST_FILE: RORORO/Info.plist
+        CODE_SIGN_ENTITLEMENTS: RORORO/RORORO.entitlements
+        ENABLE_APP_SANDBOX: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        COMBINE_HIDPI_IMAGES: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+        SWIFT_EMIT_LOC_STRINGS: YES
+
+schemes:
+  RORORO:
+    build:
+      targets:
+        RORORO: all
+    run:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

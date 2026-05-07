@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  v1 entitlements: empty.
+	  App Sandbox stays OFF — the multi-instance coordinator needs
+	  LSSetDefaultHandlerForURLScheme + Process.run("/usr/bin/open"), both
+	  blocked by the sandbox. Hardened Runtime is enforced via project.yml's
+	  Release config; Debug turns it off for dev iteration (mirroring macRo).
+	-->
+</dict>
+</plist>
