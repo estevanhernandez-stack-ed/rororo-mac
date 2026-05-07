@@ -95,12 +95,10 @@ public final class RobloxLauncher {
     @MainActor
     private static func resolveDefaultGame(_ target: LaunchTarget) throws -> LaunchTarget {
         if case .defaultGame = target {
-            let defaultURL = FavoriteGameStore.shared.defaultGameURL
-            guard !defaultURL.isEmpty,
-                  let resolved = LaunchTarget.fromUrl(defaultURL) else {
+            guard let defaultGame = FavoriteGameStore.shared.defaultGame() else {
                 throw LauncherError.unresolvedDefaultGame
             }
-            return resolved
+            return .place(placeId: defaultGame.placeId)
         }
         return target
     }

@@ -60,6 +60,20 @@ public enum RobloxApi {
         }
     }
 
+    public struct GameMetadata: Equatable, Sendable {
+        public let placeId: Int64
+        public let universeId: Int64
+        public let name: String
+        public let iconURL: URL?
+
+        public init(placeId: Int64, universeId: Int64, name: String, iconURL: URL?) {
+            self.placeId = placeId
+            self.universeId = universeId
+            self.name = name
+            self.iconURL = iconURL
+        }
+    }
+
     public enum APIError: Error, Equatable {
         /// Roblox returned 401 — the user's `.ROBLOSECURITY` cookie is no
         /// longer valid. UI re-prompts for login.
@@ -163,6 +177,87 @@ public enum RobloxApi {
         }
     }
 
+    /// Fetch metadata for a Roblox place by placeId. Three-call sequence
+    /// matching the Windows port: place → universe → name → icon. Soft-fails
+    /// any individual step (returns nil if place→universe fails; returns
+    /// metadata with iconURL=nil if icons fail). Used by AddFavoriteSheet +
+    /// AddPrivateServerSheet to enrich a paste with name + icon.
+    public static func getGameMetadata(placeId: Int64) async throws -> GameMetadata? {
+        guard placeId > 0 else { return nil }
+
+        // Step 1: place id → universe id (public, no cookie).
+        let universeURL = URL(string: "https://apis.roblox.com/universes/v1/places/\(placeId)/universe")!
+        var universeRequest = URLRequest(url: universeURL)
+        universeRequest.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+
+        let universeId: Int64
+        do {
+            let (data, response) = try await session.data(for: universeRequest)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode) else {
+                return nil
+            }
+            let decoded = try JSONDecoder().decode(UniverseLookupResponse.self, from: data)
+            guard let id = decoded.universeId, id > 0 else { return nil }
+            universeId = id
+        } catch {
+            return nil
+        }
+
+        // Step 2: universe id → game name (public, no cookie).
+        let gamesURL = URL(string: "https://games.roblox.com/v1/games?universeIds=\(universeId)")!
+        var gamesRequest = URLRequest(url: gamesURL)
+        gamesRequest.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+
+        let name: String
+        do {
+            let (data, response) = try await session.data(for: gamesRequest)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode) else {
+                return nil
+            }
+            let decoded = try JSONDecoder().decode(GamesListResponse.self, from: data)
+            guard let firstName = decoded.data.first?.name, !firstName.isEmpty else {
+                return nil
+            }
+            name = firstName
+        } catch {
+            return nil
+        }
+
+        // Step 3: universe id → icon URL. Best-effort — return metadata with
+        // iconURL=nil if this fails. Avatar/icon services are flakier than
+        // the universe + games endpoints in practice.
+        let iconURL: URL? = await {
+            let urlString = "https://thumbnails.roblox.com/v1/games/icons"
+                + "?universeIds=\(universeId)&size=150x150&format=Png&isCircular=false"
+            guard let url = URL(string: urlString) else { return nil }
+            var request = URLRequest(url: url)
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+            do {
+                let (data, response) = try await session.data(for: request)
+                guard let http = response as? HTTPURLResponse,
+                      (200..<300).contains(http.statusCode) else {
+                    return nil
+                }
+                let decoded = try JSONDecoder().decode(GameIconsResponse.self, from: data)
+                guard let imageUrl = decoded.data.first?.imageUrl, !imageUrl.isEmpty else {
+                    return nil
+                }
+                return URL(string: imageUrl)
+            } catch {
+                return nil
+            }
+        }()
+
+        return GameMetadata(
+            placeId: placeId,
+            universeId: universeId,
+            name: name,
+            iconURL: iconURL
+        )
+    }
+
     /// Fetch the avatar headshot URL for a user. Soft-fails — returns nil
     /// when the avatar service has nothing to offer rather than throwing.
     /// Callers treat the avatar as best-effort UI polish.
@@ -201,6 +296,24 @@ public enum RobloxApi {
     }
 
     private struct AvatarHeadshotResponse: Decodable {
+        let data: [Item]
+        struct Item: Decodable {
+            let imageUrl: String
+        }
+    }
+
+    private struct UniverseLookupResponse: Decodable {
+        let universeId: Int64?
+    }
+
+    private struct GamesListResponse: Decodable {
+        let data: [Item]
+        struct Item: Decodable {
+            let name: String
+        }
+    }
+
+    private struct GameIconsResponse: Decodable {
         let data: [Item]
         struct Item: Decodable {
             let imageUrl: String
