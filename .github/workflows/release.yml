@@ -21,7 +21,7 @@ permissions:
 jobs:
   release:
     name: Notarize + appcast + publish
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       # Tag name from the trigger ref, surfaced as an env var so downstream
       # shell snippets read it via "$TAG_NAME" rather than ${{ ... }}
