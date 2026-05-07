@@ -13,19 +13,24 @@ struct AccountsListView: View {
     @State private var inFlightLaunchUserId: String?
     @State private var lastLaunchError: String?
     @State private var pendingTargetForAccount: Account?
+    @State private var showGameSettings: Bool = false
+    @State private var defaultGameURL: String = FavoriteGameStore.shared.defaultGameURL
 
     private let accountStore = AccountStore.shared
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            Group {
-                if accountStore.accounts.isEmpty {
-                    emptyState
-                } else {
-                    accountList
+            VStack(spacing: 0) {
+                defaultGameBanner
+                Group {
+                    if accountStore.accounts.isEmpty {
+                        emptyState
+                    } else {
+                        accountList
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             addAccountButton
                 .padding(Theme.Spacing.lg)
@@ -46,6 +51,61 @@ struct AccountsListView: View {
                 pendingTargetForAccount = nil
             }
         }
+        .sheet(isPresented: $showGameSettings) {
+            GameSettingsSheet(defaultGameURL: $defaultGameURL, isPresented: $showGameSettings)
+        }
+    }
+
+    /// Always-visible banner. Surfaces the current default game and the
+    /// per-launch override path so users don't have to dig through Settings
+    /// to discover them.
+    private var defaultGameBanner: some View {
+        HStack(spacing: Theme.Spacing.md) {
+            Image(systemName: "gamecontroller")
+                .foregroundStyle(Theme.Color.brandCyan)
+                .imageScale(.large)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Default game")
+                    .font(Theme.Font.monoMicro)
+                    .tracking(1.2)
+                    .foregroundStyle(Theme.Color.fg3)
+                if defaultGameURL.isEmpty {
+                    Text("Not set — Launch As will fail until you pick one.")
+                        .font(Theme.Font.bodySmall)
+                        .foregroundStyle(Theme.Color.stateWarn)
+                } else {
+                    Text(prettyDefaultGame(defaultGameURL))
+                        .font(Theme.Font.bodySmall)
+                        .foregroundStyle(Theme.Color.fg1)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            Spacer()
+            Button(defaultGameURL.isEmpty ? "Set default" : "Change") {
+                showGameSettings = true
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(.horizontal, Theme.Spacing.md)
+        .padding(.vertical, Theme.Spacing.sm)
+        .background(Theme.Color.bgSurface)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Theme.Color.bgRaised)
+                .frame(height: 1)
+        }
+    }
+
+    private func prettyDefaultGame(_ url: String) -> String {
+        // Show a place name when we can parse one; fall back to the URL.
+        if case let .place(placeId)? = LaunchTarget.fromUrl(url) {
+            return "Place \(placeId)"
+        }
+        if case let .privateServer(placeId, _, kind)? = LaunchTarget.fromUrl(url) {
+            return "Private server (\(kind == .linkCode ? "share link" : "access code")) on place \(placeId)"
+        }
+        return url
     }
 
     private var emptyState: some View {
