@@ -68,13 +68,33 @@ targets:
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
         SWIFT_EMIT_LOC_STRINGS: YES
 
+  ROROROTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: ROROROTests
+    dependencies:
+      - target: RORORO
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.626labs.ROROROTests
+        GENERATE_INFOPLIST_FILE: YES
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/RORORO.app/Contents/MacOS/RORORO"
+
 schemes:
   RORORO:
     build:
       targets:
         RORORO: all
+        ROROROTests: [test]
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - ROROROTests
     profile:
       config: Release
     analyze:
