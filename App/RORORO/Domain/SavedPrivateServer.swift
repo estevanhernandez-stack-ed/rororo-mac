@@ -28,6 +28,10 @@ public struct SavedPrivateServer: Codable, Equatable, Identifiable, Sendable {
     public var thumbnailURL: URL?
     public let addedAt: Date
     public var lastLaunchedAt: Date?
+    /// Cross-store default flag. Only one entry across `FavoriteGameStore`
+    /// + `PrivateServerStore` should have `isDefault = true` at any time;
+    /// the stores enforce this on `setDefault(...)` via a clearOther call.
+    public var isDefault: Bool
 
     public init(
         id: UUID = UUID(),
@@ -38,7 +42,8 @@ public struct SavedPrivateServer: Codable, Equatable, Identifiable, Sendable {
         placeName: String = "",
         thumbnailURL: URL? = nil,
         addedAt: Date = Date(),
-        lastLaunchedAt: Date? = nil
+        lastLaunchedAt: Date? = nil,
+        isDefault: Bool = false
     ) {
         self.id = id
         self.placeId = placeId
@@ -49,6 +54,23 @@ public struct SavedPrivateServer: Codable, Equatable, Identifiable, Sendable {
         self.thumbnailURL = thumbnailURL
         self.addedAt = addedAt
         self.lastLaunchedAt = lastLaunchedAt
+        self.isDefault = isDefault
+    }
+
+    /// Custom decoder so `isDefault` defaults to `false` when missing
+    /// from older private-servers.json blobs (pre-v0.2.x had no flag).
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.placeId = try c.decode(Int64.self, forKey: .placeId)
+        self.code = try c.decode(String.self, forKey: .code)
+        self.codeKind = try c.decode(PrivateServerCodeKind.self, forKey: .codeKind)
+        self.name = try c.decode(String.self, forKey: .name)
+        self.placeName = try c.decodeIfPresent(String.self, forKey: .placeName) ?? ""
+        self.thumbnailURL = try c.decodeIfPresent(URL.self, forKey: .thumbnailURL)
+        self.addedAt = try c.decode(Date.self, forKey: .addedAt)
+        self.lastLaunchedAt = try c.decodeIfPresent(Date.self, forKey: .lastLaunchedAt)
+        self.isDefault = try c.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -61,6 +83,7 @@ public struct SavedPrivateServer: Codable, Equatable, Identifiable, Sendable {
         case thumbnailURL = "thumbnailUrl"
         case addedAt
         case lastLaunchedAt
+        case isDefault
     }
 }
 

@@ -185,6 +185,7 @@ struct GamesView: View {
             ForEach(serverStore.servers) { server in
                 PrivateServerRow(
                     server: server,
+                    onSetDefault: { serverStore.setDefault(id: server.id) },
                     onRename: {
                         renameTarget = .server(id: server.id, currentName: server.name)
                     },
@@ -360,6 +361,7 @@ private struct FavoriteRow: View {
 
 private struct PrivateServerRow: View {
     let server: SavedPrivateServer
+    let onSetDefault: () -> Void
     let onRename: () -> Void
     let onRemove: () -> Void
 
@@ -367,9 +369,23 @@ private struct PrivateServerRow: View {
         HStack(spacing: Theme.Spacing.md) {
             thumbnail
             VStack(alignment: .leading, spacing: 2) {
-                Text(server.name)
-                    .font(Theme.Font.body)
-                    .foregroundStyle(Theme.Color.fg1)
+                HStack(spacing: Theme.Spacing.xs) {
+                    Text(server.name)
+                        .font(Theme.Font.body)
+                        .foregroundStyle(Theme.Color.fg1)
+                    if server.isDefault {
+                        Text("DEFAULT")
+                            .font(Theme.Font.monoMicro)
+                            .tracking(1.2)
+                            .foregroundStyle(Theme.Color.productTeal)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(Theme.Color.productTeal, lineWidth: 1)
+                            )
+                    }
+                }
                 Text(subtitle)
                     .font(Theme.Font.monoMicro)
                     .foregroundStyle(Theme.Color.fg3)
@@ -386,6 +402,10 @@ private struct PrivateServerRow: View {
             .help("Rename")
 
             Menu {
+                if !server.isDefault {
+                    Button("Set as default", action: onSetDefault)
+                }
+                Divider()
                 Button("Remove", role: .destructive, action: onRemove)
             } label: {
                 Image(systemName: "ellipsis")

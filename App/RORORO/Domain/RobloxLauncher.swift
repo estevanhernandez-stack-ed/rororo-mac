@@ -95,12 +95,45 @@ public final class RobloxLauncher {
     @MainActor
     private static func resolveDefaultGame(_ target: LaunchTarget) throws -> LaunchTarget {
         if case .defaultGame = target {
-            guard let defaultGame = FavoriteGameStore.shared.defaultGame() else {
+            guard let resolved = currentDefaultTarget() else {
                 throw LauncherError.unresolvedDefaultGame
             }
-            return .place(placeId: defaultGame.placeId)
+            return resolved
         }
         return target
+    }
+
+    /// The user's current "default launch target" — either a marked-default
+    /// favorite or a marked-default saved private server. Used by the UI
+    /// to drive the per-row Launch As primary button label + by
+    /// `resolveDefaultGame` to convert `.defaultGame` to a concrete target.
+    /// Returns nil when nothing is marked default.
+    @MainActor
+    public static func currentDefaultTarget() -> LaunchTarget? {
+        if let fav = FavoriteGameStore.shared.defaultGame() {
+            return .place(placeId: fav.placeId)
+        }
+        if let server = PrivateServerStore.shared.defaultServer() {
+            return .privateServer(
+                placeId: server.placeId,
+                code: server.code,
+                kind: server.codeKind
+            )
+        }
+        return nil
+    }
+
+    /// Display name for the current default — favorite name OR private-
+    /// server name. nil when no default is set.
+    @MainActor
+    public static func currentDefaultDisplayName() -> String? {
+        if let fav = FavoriteGameStore.shared.defaultGame() {
+            return fav.name
+        }
+        if let server = PrivateServerStore.shared.defaultServer() {
+            return server.name
+        }
+        return nil
     }
 
     // MARK: - URI builders (Phase 2 — unchanged)

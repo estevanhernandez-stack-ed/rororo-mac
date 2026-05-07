@@ -119,6 +119,38 @@ public final class PrivateServerStore {
         save()
     }
 
+    /// Returns the entry currently flagged as default, if any.
+    public func defaultServer() -> SavedPrivateServer? {
+        servers.first(where: { $0.isDefault })
+    }
+
+    /// Clear all `isDefault` flags then mark the named server as default.
+    /// Also clears the FavoriteGameStore's default — only one entry across
+    /// both stores can be the default at a time.
+    public func setDefault(id: UUID) {
+        guard servers.contains(where: { $0.id == id }) else { return }
+        for i in servers.indices {
+            servers[i].isDefault = (servers[i].id == id)
+        }
+        save()
+        // Cross-store: clear the favorites' default to maintain the
+        // single-default invariant. clearDefaultFlag does NOT call back.
+        FavoriteGameStore.shared.clearDefaultFlag()
+    }
+
+    /// Clear isDefault on all entries in this store. Called by
+    /// FavoriteGameStore.setDefault to maintain the cross-store invariant.
+    /// Does NOT call back into FavoriteGameStore — the call site
+    /// (FavoriteGameStore.setDefault) already updated its own flags.
+    public func clearDefaultFlag() {
+        var changed = false
+        for i in servers.indices where servers[i].isDefault {
+            servers[i].isDefault = false
+            changed = true
+        }
+        if changed { save() }
+    }
+
     // MARK: - Persistence
 
     private struct Blob: Codable {

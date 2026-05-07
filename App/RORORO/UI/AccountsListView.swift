@@ -20,6 +20,7 @@ struct AccountsListView: View {
 
     private let accountStore = AccountStore.shared
     private let favoriteStore = FavoriteGameStore.shared
+    private let serverStore = PrivateServerStore.shared
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -62,20 +63,20 @@ struct AccountsListView: View {
 
     // MARK: - Banner
 
-    /// Always-visible banner. Reads directly from FavoriteGameStore.shared
-    /// (an @Observable singleton) so it updates whenever a default is set
-    /// or cleared in GamesView.
+    /// Always-visible banner. Resolves the current default across BOTH
+    /// FavoriteGameStore and PrivateServerStore — the marked-default
+    /// entry can be either a favorite game or a saved private server.
     private var defaultGameBanner: some View {
-        let defaultGame = favoriteStore.defaultGame()
+        let target = bannerTarget()
         return HStack(spacing: Theme.Spacing.md) {
-            bannerIcon(for: defaultGame)
+            bannerIcon(target: target)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Default game")
+                Text("Default launch target")
                     .font(Theme.Font.monoMicro)
                     .tracking(1.2)
                     .foregroundStyle(Theme.Color.fg3)
-                if let defaultGame {
-                    Text(defaultGame.name)
+                if let target {
+                    Text(target.name)
                         .font(Theme.Font.bodySmall)
                         .foregroundStyle(Theme.Color.fg1)
                         .lineLimit(1)
@@ -87,7 +88,7 @@ struct AccountsListView: View {
                 }
             }
             Spacer()
-            Button(defaultGame == nil ? "Set up" : "Manage") {
+            Button(target == nil ? "Set up" : "Manage") {
                 showGames = true
             }
             .buttonStyle(.bordered)
@@ -102,25 +103,42 @@ struct AccountsListView: View {
         }
     }
 
+    private struct BannerTarget {
+        let name: String
+        let thumbnailURL: URL?
+        let kind: Kind
+        enum Kind { case favorite, privateServer }
+    }
+
+    private func bannerTarget() -> BannerTarget? {
+        if let fav = favoriteStore.defaultGame() {
+            return BannerTarget(name: fav.name, thumbnailURL: fav.thumbnailURL, kind: .favorite)
+        }
+        if let server = serverStore.defaultServer() {
+            return BannerTarget(name: server.name, thumbnailURL: server.thumbnailURL, kind: .privateServer)
+        }
+        return nil
+    }
+
     @ViewBuilder
-    private func bannerIcon(for game: FavoriteGame?) -> some View {
-        if let url = game?.thumbnailURL {
+    private func bannerIcon(target: BannerTarget?) -> some View {
+        if let url = target?.thumbnailURL {
             AsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let image): image.resizable().scaledToFill()
-                default: bannerIconPlaceholder
+                default: bannerIconPlaceholder(kind: target?.kind)
                 }
             }
             .frame(width: 28, height: 28)
             .clipShape(RoundedRectangle(cornerRadius: 6))
         } else {
-            bannerIconPlaceholder
+            bannerIconPlaceholder(kind: target?.kind)
                 .frame(width: 28, height: 28)
         }
     }
 
-    private var bannerIconPlaceholder: some View {
-        Image(systemName: "gamecontroller")
+    private func bannerIconPlaceholder(kind: BannerTarget.Kind?) -> some View {
+        Image(systemName: kind == .privateServer ? "lock.shield" : "gamecontroller")
             .foregroundStyle(Theme.Color.brandCyan)
             .imageScale(.large)
     }
@@ -153,15 +171,30 @@ struct AccountsListView: View {
     }
 
     private var accountList: some View {
-        List(accountStore.accounts) { account in
+        let defaultName = RobloxLauncher.currentDefaultDisplayName()
+        return List(accountStore.accounts) { account in
             AccountRow(
                 account: account,
                 isLaunching: inFlightLaunchUserId == account.userId,
+                defaultDisplayName: defaultName,
                 favorites: favoriteStore.favorites,
-                servers: PrivateServerStore.shared.servers,
+                servers: serverStore.servers,
                 onLaunchPrimary: { launchPrimary(account: account) },
-                onLaunchTarget: { target, savedServerId in
-                    launch(account: account, target: target, savedServerId: savedServerId)
+                onPickFavorite: { game in
+                    favoriteStore.setDefault(placeId: game.placeId)
+                    launch(account: account, target: .place(placeId: game.placeId), savedServerId: nil)
+                },
+                onPickServer: { server in
+                    serverStore.setDefault(id: server.id)
+                    launch(
+                        account: account,
+                        target: .privateServer(
+                            placeId: server.placeId,
+                            code: server.code,
+                            kind: server.codeKind
+                        ),
+                        savedServerId: server.id
+                    )
                 },
                 onLaunchCustom: { pendingPickerForAccount = account },
                 onRemove: { remove(account: account) }
@@ -250,10 +283,12 @@ struct AccountsListView: View {
 private struct AccountRow: View {
     let account: Account
     let isLaunching: Bool
+    let defaultDisplayName: String?
     let favorites: [FavoriteGame]
     let servers: [SavedPrivateServer]
     let onLaunchPrimary: () -> Void
-    let onLaunchTarget: (LaunchTarget, _ savedServerId: UUID?) -> Void
+    let onPickFavorite: (FavoriteGame) -> Void
+    let onPickServer: (SavedPrivateServer) -> Void
     let onLaunchCustom: () -> Void
     let onRemove: () -> Void
 
@@ -283,21 +318,44 @@ private struct AccountRow: View {
         .padding(.vertical, Theme.Spacing.xs)
     }
 
-    /// Split-button: primary "Launch As" → default game one-click;
-    /// chevron dropdown → favorites + saved servers + custom + remove.
-    /// Replaces the v0.2.0 separate Launch As + ⋯ pair.
+    /// Visual: a single rounded-rectangle that contains both the primary
+    /// label and a chevron dropdown, separated by a hairline. Looks like a
+    /// macOS popup-button-style split button. Primary tap launches the
+    /// current default; chevron tap opens a dropdown to switch.
+    ///
+    /// Picking from the dropdown sets the chosen target as the new
+    /// cross-store default AND launches it — one click, persistent. The
+    /// banner + primary label both reflect the new default thereafter.
     private var splitLaunchButton: some View {
         HStack(spacing: 0) {
-            Button("Launch As", action: onLaunchPrimary)
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.Color.productTeal)
+            Button(action: onLaunchPrimary) {
+                Text(primaryLabel)
+                    .font(Theme.Font.bodySmall)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Color.white)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .frame(minWidth: 110)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .background(Theme.Color.productTeal)
+
+            // Hairline divider between primary face and chevron.
+            Rectangle()
+                .fill(Color.black.opacity(0.18))
+                .frame(width: 1, height: 26)
 
             Menu {
+                Button("Launch into default", action: onLaunchPrimary)
+                    .disabled(defaultDisplayName == nil)
                 if !favorites.isEmpty {
                     Section("Favorite games") {
                         ForEach(favorites) { game in
-                            Button(game.isDefault ? "\(game.name)  (default)" : game.name) {
-                                onLaunchTarget(.place(placeId: game.placeId), nil)
+                            Button(game.isDefault ? "\(game.name) — current default" : game.name) {
+                                onPickFavorite(game)
                             }
                         }
                     }
@@ -305,15 +363,8 @@ private struct AccountRow: View {
                 if !servers.isEmpty {
                     Section("Saved private servers") {
                         ForEach(servers) { server in
-                            Button(server.name) {
-                                onLaunchTarget(
-                                    .privateServer(
-                                        placeId: server.placeId,
-                                        code: server.code,
-                                        kind: server.codeKind
-                                    ),
-                                    server.id
-                                )
+                            Button(server.isDefault ? "\(server.name) — current default" : server.name) {
+                                onPickServer(server)
                             }
                         }
                     }
@@ -326,16 +377,26 @@ private struct AccountRow: View {
                 Button("Remove account", role: .destructive, action: onRemove)
             } label: {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(Color.white)
-                    .frame(width: 26, height: 26)
+                    .frame(width: 28, height: 26)
                     .contentShape(Rectangle())
             }
             .menuIndicator(.hidden)
             .menuStyle(.borderlessButton)
-            .background(Theme.Color.productTeal.opacity(0.85), in: RoundedRectangle(cornerRadius: 5))
-            .padding(.leading, 1)
+            .background(Theme.Color.productTeal)
         }
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+    }
+
+    /// Primary button text. Shows the current default's name when one is
+    /// set so the user can tell what Launch As will do at a glance —
+    /// "Launch As" alone was ambiguous (caught at v0.2 manual smoke).
+    private var primaryLabel: String {
+        if let name = defaultDisplayName {
+            return "Launch As — \(name)"
+        }
+        return "Launch As"
     }
 
     @ViewBuilder

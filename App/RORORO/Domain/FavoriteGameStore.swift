@@ -106,6 +106,8 @@ public final class FavoriteGameStore {
     }
 
     /// Clear all `isDefault` flags then mark the named placeId as default.
+    /// Also clears the PrivateServerStore's default — only one entry
+    /// across both stores can be the default at a time.
     /// No-op if placeId isn't in the list.
     public func setDefault(placeId: Int64) {
         guard favorites.contains(where: { $0.placeId == placeId }) else { return }
@@ -113,6 +115,18 @@ public final class FavoriteGameStore {
             favorites[i].isDefault = (favorites[i].placeId == placeId)
         }
         save()
+        PrivateServerStore.shared.clearDefaultFlag()
+    }
+
+    /// Clear isDefault on all entries. Called by PrivateServerStore.setDefault
+    /// to maintain the cross-store invariant. Does NOT call back.
+    public func clearDefaultFlag() {
+        var changed = false
+        for i in favorites.indices where favorites[i].isDefault {
+            favorites[i].isDefault = false
+            changed = true
+        }
+        if changed { save() }
     }
 
     /// Update display fields without touching `isDefault`. Called by the
