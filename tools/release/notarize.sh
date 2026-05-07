@@ -69,6 +69,50 @@ if [[ ! -d "$APP_PATH" ]]; then
   exit 1
 fi
 
+echo "==> [2.5/8] Re-sign nested Sparkle helpers"
+# Sparkle ships pre-signed helper binaries (Updater.app, Autoupdate, XPC
+# services) — signed by the Sparkle Project's cert, not ours. Notarization
+# requires every binary in the bundle signed with our Developer ID + secure
+# timestamp + Hardened Runtime. Re-sign inside-out so the framework's new
+# signature is captured by the .app's outer signature.
+#
+# Caught at v0.1.0 attempt 4 — Apple rejected with "binary not signed with
+# valid Developer ID certificate" against
+# .../Sparkle.framework/Versions/B/{Updater.app,Autoupdate,XPCServices/*}.
+
+SPARKLE_DIR="$APP_PATH/Contents/Frameworks/Sparkle.framework/Versions/Current"
+if [[ -d "$SPARKLE_DIR" ]]; then
+  # Helper apps + XPC services
+  while IFS= read -r -d '' helper; do
+    echo "    re-sign: $helper"
+    codesign --force --timestamp --options runtime \
+      --sign "$MACOS_CERTIFICATE_NAME" "$helper"
+  done < <(find "$SPARKLE_DIR" -type d \( -name '*.xpc' -o -name '*.app' \) -print0)
+
+  # Plain executable helpers (e.g., Autoupdate). Filter to the framework's
+  # top-level binaries — don't try to re-sign Resources files.
+  while IFS= read -r -d '' binary; do
+    echo "    re-sign: $binary"
+    codesign --force --timestamp --options runtime \
+      --sign "$MACOS_CERTIFICATE_NAME" "$binary"
+  done < <(find "$SPARKLE_DIR" -maxdepth 1 -type f -perm +111 -print0)
+
+  # Then the framework itself.
+  echo "    re-sign: Sparkle.framework"
+  codesign --force --timestamp --options runtime \
+    --sign "$MACOS_CERTIFICATE_NAME" \
+    "$APP_PATH/Contents/Frameworks/Sparkle.framework"
+fi
+
+# Finally re-sign the main .app so its outer signature incorporates the
+# updated nested signatures. Preserves existing entitlements.
+echo "    re-sign: $APP_PATH"
+codesign --force --timestamp --options runtime \
+  --sign "$MACOS_CERTIFICATE_NAME" "$APP_PATH"
+
+echo "    verify: --deep --strict"
+codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
 echo "==> [3/8] Zip the .app for notarytool submission"
 ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
 
