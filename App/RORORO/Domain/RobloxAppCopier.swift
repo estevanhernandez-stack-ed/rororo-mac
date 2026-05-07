@@ -44,22 +44,27 @@ public enum RobloxAppCopier {
         case supportDirCreationFailed(underlying: String)
     }
 
-    /// Resolve `~/Library/Application Support/RORORO/instances/`. Creates
-    /// the directory tree if missing. Throws on filesystem failure.
+    /// Resolve `~/Applications/RORORO/instances/`. Creates the directory
+    /// tree if missing. Throws on filesystem failure.
+    ///
+    /// Why `~/Applications/` and not `~/Library/Application Support/`:
+    /// macOS Gatekeeper treats anything under `Library/` with extra
+    /// scrutiny — running a `.app` from there triggers a "Verifying"
+    /// progress bar that can stall (caught at v0.1.2 manual smoke,
+    /// 2026-05-07). `~/Applications/` is the user's personal apps folder
+    /// and gets standard Gatekeeper treatment. The Insadem reference uses
+    /// `~/Library/Caches/` and works on older macOS, but newer macOS
+    /// (14+) is stricter.
     public static func instancesRoot(supportDirOverride: URL? = nil) throws -> URL {
         let support: URL
         if let supportDirOverride {
             support = supportDirOverride
         } else {
-            let asUrl = try FileManager.default.url(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask,
-                appropriateFor: nil,
-                create: true
-            )
+            let homeDir = FileManager.default.homeDirectoryForCurrentUser
+            let userApps = homeDir.appendingPathComponent("Applications", isDirectory: true)
             // Namespace under the bundle name so multiple 626 Labs apps
-            // don't collide in Application Support.
-            support = asUrl.appendingPathComponent("RORORO", isDirectory: true)
+            // don't collide.
+            support = userApps.appendingPathComponent("RORORO", isDirectory: true)
         }
         let instances = support.appendingPathComponent(instancesSubdir, isDirectory: true)
         do {

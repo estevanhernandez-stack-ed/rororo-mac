@@ -136,38 +136,49 @@ public final class MultiInstanceCoordinator {
     }
 
     nonisolated private static func openRoblox(at appURL: URL, with url: URL) async throws {
-        // Two ways to launch a copy with a URL on macOS:
-        //   (a) NSWorkspace.shared.open([url], withApplicationAt: copy, configuration:
-        //       { createsNewApplicationInstance = true })
-        //   (b) /usr/bin/open -n -a <copy> <url>
+        // Use /usr/bin/open -n -a <copy> <url>. NSWorkspace.shared.open
+        // (Cocoa idiom) was tried first but its URL-handler resolution
+        // prefers a registered .app for the bundle ID (Roblox's) and
+        // ignored our explicit copy URL — the user saw "The application
+        // '<uuid>.app' can't be opened" against fresh copies even with
+        // createsNewApplicationInstance=true.
         //
-        // (a) is the Cocoa idiom, but in v0.1.1 it surfaced "The application
-        // '<uuid>.app' can't be opened." against fresh per-instance copies
-        // even with createsNewApplicationInstance=true. LaunchServices' URL-
-        // handler resolution prefers a registered .app for the bundle ID
-        // (Roblox's bundle ID) and ignores the explicit copy URL in some
-        // configs.
-        //
-        // (b) is what the Insadem Go reference uses and is the de-facto
-        // standard for the multi-instance technique on macOS — `-n` forces
-        // a new instance, `-a <path>` pins to the copy at the exact path,
-        // and the trailing URL is handed off to that .app's URL handler.
+        // `-n` forces a new instance even if the bundle ID is already
+        // running. `-a <path>` pins to the copy at the exact path. The
+        // trailing URL is handed off to the .app's URL handler.
 
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        // -W would block until exit (useful for debugging) — we don't
+        // want that in production. -g would launch hidden — also not
+        // what we want. -n -a is the de-facto standard.
         task.arguments = ["-n", "-a", appURL.path, url.absoluteString]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = pipe
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        task.standardOutput = outPipe
+        task.standardError = errPipe
+
+        NSLog("[RORORO] open -n -a \(appURL.path) \(url.absoluteString)")
+
         try task.run()
         task.waitUntilExit()
+
+        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        let stdoutText = String(data: outData, encoding: .utf8) ?? ""
+        let stderrText = String(data: errData, encoding: .utf8) ?? ""
+
+        NSLog("[RORORO] open exit=\(task.terminationStatus) stdout=\(stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)) stderr=\(stderrText.trimmingCharacters(in: .whitespacesAndNewlines))")
+
         if task.terminationStatus != 0 {
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let msg = String(data: data, encoding: .utf8) ?? "exit \(task.terminationStatus)"
+            let detail = stderrText.isEmpty ? stdoutText : stderrText
             throw NSError(
                 domain: "MultiInstanceCoordinator",
                 code: Int(task.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: "open -n -a failed: \(msg)"]
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "open exited \(task.terminationStatus): \(detail.trimmingCharacters(in: .whitespacesAndNewlines))"
+                ]
             )
         }
     }
