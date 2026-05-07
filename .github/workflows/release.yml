@@ -1,0 +1,124 @@
+name: Release
+
+# Tag-driven release pipeline. Push a v* tag → this workflow archives,
+# notarizes, attaches a notarized DMG to the GitHub Release, regenerates
+# the Sparkle appcast, and publishes it to gh-pages.
+#
+# Bootstrap is owed-to-Estevan before the first v* tag will produce a green
+# release — see tools/release/README.md for the four steps (Sparkle keypair,
+# Apple Developer ID cert, notarization creds, GitHub Pages enablement).
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  # contents:write needed for softprops/action-gh-release to attach the DMG
+  # to the Release, and for peaceiris/actions-gh-pages to push the appcast
+  # to the gh-pages branch.
+  contents: write
+
+jobs:
+  release:
+    name: Notarize + appcast + publish
+    runs-on: macos-14
+    env:
+      # Tag name from the trigger ref, surfaced as an env var so downstream
+      # shell snippets read it via "$TAG_NAME" rather than ${{ ... }}
+      # interpolation. Tags match v* (constrained by the trigger), but the
+      # env-var pattern is the safe-by-default Actions idiom.
+      TAG_NAME: ${{ github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: App
+        run: xcodegen generate
+
+      - name: Resolve SPM dependencies
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project App/RORORO.xcodeproj \
+            -scheme RORORO
+
+      - name: Locate Sparkle sign_update utility
+        run: |
+          # SPM caches Sparkle's bin/ under ~/Library/Developer/Xcode/DerivedData
+          # after -resolvePackageDependencies. Pin its path for the appcast step.
+          SIGN_UPDATE_PATH="$(find "$HOME/Library/Developer/Xcode/DerivedData" -name sign_update -type f 2>/dev/null | head -n 1 || true)"
+          if [[ -z "$SIGN_UPDATE_PATH" ]]; then
+            echo "::error::sign_update not found in DerivedData. SPM resolution may have failed."
+            exit 1
+          fi
+          echo "SPARKLE_SIGN_UPDATE_PATH=$SIGN_UPDATE_PATH" >> "$GITHUB_ENV"
+          echo "Resolved sign_update at $SIGN_UPDATE_PATH"
+
+      - name: Import Apple Developer ID certificate
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain"
+          KEYCHAIN_PASSWORD="$MACOS_CERTIFICATE_PASSWORD"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          echo "$MACOS_CERTIFICATE" | base64 --decode -o "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Make this keychain the default search target so codesign finds the cert.
+          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+
+      - name: Notarize and DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+          MACOS_CERTIFICATE_NAME: ${{ secrets.MACOS_CERTIFICATE_NAME }}
+        run: bash tools/release/notarize.sh
+
+      - name: Attach DMG to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/RORORO.dmg
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+
+      - name: Generate appcast.xml
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          GITHUB_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash tools/release/generate-appcast.sh
+
+      - name: Publish appcast to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        env:
+          # Surface the tag for the commit message body via env var rather
+          # than ${{ ... }} interpolation in a shell-evaluated context.
+          PUBLISH_TAG: ${{ github.ref_name }}
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          publish_branch: gh-pages
+          keep_files: false
+          commit_message: "release(appcast): publish appcast for ${{ github.ref_name }}"

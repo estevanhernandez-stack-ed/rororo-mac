@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Apple Developer ID distribution outside the Mac App Store. -->
+	<key>method</key>
+	<string>developer-id</string>
+	<!-- Manual signing — DEVELOPMENT_TEAM passed via xcodebuild env keeps
+	     CI runners from racing on automatic-signing keychain access. -->
+	<key>signingStyle</key>
+	<string>manual</string>
+	<!-- xcodebuild expands $(DEVELOPMENT_TEAM) from the build settings the
+	     workflow injected (DEVELOPMENT_TEAM=$APPLE_TEAM_ID). -->
+	<key>teamID</key>
+	<string>$(DEVELOPMENT_TEAM)</string>
+	<!-- Upload symbols so Apple's notary service has them; helpful for
+	     symbolicated crash reports later. -->
+	<key>uploadSymbols</key>
+	<true/>
+</dict>
+</plist>

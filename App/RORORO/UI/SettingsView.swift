@@ -41,6 +41,10 @@ struct SettingsView: View {
                     .foregroundStyle(Theme.Color.fg3)
             }
 
+            section("Updates") {
+                UpdateSettingsView(updater: UpdaterHost.shared.updater)
+            }
+
             DisclosureGroup("Danger zone", isExpanded: $dangerZoneVisible) {
                 Text("Future surface for sensitive operations (e.g. exporting cookies for sibling apps). Off in v0.1.0.")
                     .font(Theme.Font.bodySmall)

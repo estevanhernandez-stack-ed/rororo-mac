@@ -57,5 +57,27 @@
 			<string>Viewer</string>
 		</dict>
 	</array>
+
+	<!-- ============================================================
+	     Sparkle 2.x auto-update configuration (Phase 6).
+	     SUPublicEDKey is a placeholder until Estevan generates the EdDSA
+	     keypair via Sparkle's generate_keys utility (bootstrap step — see
+	     tools/release/README.md). Auto-checks are GATED OFF until bootstrap
+	     because firing the updater against an unresolvable public key + a
+	     404 appcast surfaces an error dialog whose dismiss path can crash
+	     the app. Flip SUEnableAutomaticChecks back to true in the same
+	     commit that pastes in the real public key. SUFeedURL is HTTPS-only
+	     by hard contract.
+	     ============================================================ -->
+	<key>SUFeedURL</key>
+	<string>https://626labs.github.io/rororo-mac/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>REPLACE_WITH_GENERATED_PUBLIC_KEY</string>
+	<key>SUEnableInstallerLauncherService</key>
+	<true/>
+	<key>SUEnableAutomaticChecks</key>
+	<false/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 </dict>
 </plist>
