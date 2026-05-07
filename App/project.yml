@@ -17,7 +17,7 @@ options:
 
 # Swift Package Manager dependencies. Sparkle 2.x powers the auto-update
 # path — EdDSA-signed appcast hosted at
-# https://626labs.github.io/rororo-mac/appcast.xml. Pinned major-minor;
+# https://estevanhernandez-stack-ed.github.io/rororo-mac/appcast.xml. Pinned major-minor;
 # minor bumps land via a logged decision.
 packages:
   Sparkle:

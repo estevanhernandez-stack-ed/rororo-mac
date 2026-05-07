@@ -15,7 +15,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DIST_DIR="$REPO_ROOT/dist"
 APPCAST_PATH="$DIST_DIR/appcast.xml"
 DOWNLOAD_DIR="$REPO_ROOT/build/appcast"
-APPCAST_FEED_URL="https://626labs.github.io/rororo-mac/appcast.xml"
+APPCAST_FEED_URL="https://estevanhernandez-stack-ed.github.io/rororo-mac/appcast.xml"
 
 mkdir -p "$DIST_DIR" "$DOWNLOAD_DIR"
 

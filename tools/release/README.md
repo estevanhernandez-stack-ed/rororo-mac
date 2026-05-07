@@ -17,7 +17,7 @@ git tag v0.1.0  →  push  →  .github/workflows/release.yml triggers
                                   └─ publish dist/ to gh-pages
                                                 │
                                                 ▼
-                       https://626labs.github.io/rororo-mac/appcast.xml
+                       https://estevanhernandez-stack-ed.github.io/rororo-mac/appcast.xml
                                                 │
                                                 ▼
                     Sparkle clients next-launch → prompt + download
@@ -136,7 +136,7 @@ git push origin v0.1.0
 Watch GitHub Actions. Then verify:
 
 - The Release page shows the notarized DMG attached.
-- `https://626labs.github.io/rororo-mac/appcast.xml` serves the new `<item>`.
+- `https://estevanhernandez-stack-ed.github.io/rororo-mac/appcast.xml` serves the new `<item>`.
 - A pre-existing install (`v0.0.x`) prompts for the update on next launch.
 
 ## Rolling back a broken release

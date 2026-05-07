@@ -25,7 +25,7 @@ Once shipped: download the latest `RORORO.dmg` from [Releases](https://github.co
 - **Keychain-backed cookie vault.** Saved cookies live in your login Keychain (`kSecAttrAccessibleWhenUnlocked` + `kSecAttrSynchronizable: false`). They never leave your Mac and never sync to iCloud.
 - **Per-game launch routing.** Set a default Roblox game URL once; *Launch As* lands every alt in that game.
 - **Menu-bar tray.** State-coloured ring shows multi-instance status at a glance (cyan = on, slate = off, magenta = error).
-- **Sparkle auto-update.** EdDSA-signed appcast hosted at `https://626labs.github.io/rororo-mac/appcast.xml`. Drift-compatible with future Roblox-side changes.
+- **Sparkle auto-update.** EdDSA-signed appcast hosted at `https://estevanhernandez-stack-ed.github.io/rororo-mac/appcast.xml`. Drift-compatible with future Roblox-side changes.
 - **No telemetry.** Anonymous GitHub Releases download counts only.
 
 ## How to use

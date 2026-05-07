@@ -47,7 +47,7 @@ RORORO initiates HTTPS connections **only** to:
 | `auth.roblox.com` | During *Launch As* | Roblox's documented authentication-ticket endpoint — exchanges the saved cookie for a one-time launch ticket. The same endpoint Bloxstrap and other launchers use. |
 | `users.roblox.com` | When adding an account | Public account metadata (display name, ID). Used to confirm the captured cookie maps to a real account. |
 | `thumbnails.roblox.com` | When adding an account | Public avatar imagery. Best-effort — failures don't block account creation. |
-| `626labs.github.io/rororo-mac/appcast.xml` | At app startup (when auto-checks are enabled) | Sparkle auto-update appcast — XML index of available releases, signed with EdDSA. |
+| `estevanhernandez-stack-ed.github.io/rororo-mac/appcast.xml` | At app startup (when auto-checks are enabled) | Sparkle auto-update appcast — XML index of available releases, signed with EdDSA. |
 | `github.com/estevanhernandez-stack-ed/rororo-mac/releases/...` | When applying an update | Sparkle downloads the update DMG from GitHub Releases. |
 
 RORORO sends a `User-Agent` header of `RORORO-Mac/<version>` on every Roblox-side request. We do **not** spoof a browser UA. We are transparent and identifiable to the receiving servers.

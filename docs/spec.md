@@ -108,7 +108,7 @@ The "Launch As" UI button calls `RobloxLauncher.shared.launch(account:target:)` 
 ## §8 Distribution
 
 - Apple Developer ID signed + notarized DMG via GitHub Releases.
-- Sparkle 2.x for auto-update; EdDSA-signed appcast hosted at `https://626labs.github.io/rororo-mac/appcast.xml`.
+- Sparkle 2.x for auto-update; EdDSA-signed appcast hosted at `https://estevanhernandez-stack-ed.github.io/rororo-mac/appcast.xml`.
 - Tag-driven: `git tag v0.1.0 && git push origin v0.1.0` triggers `.github/workflows/release.yml`.
 - Bootstrap (4 steps owed to Estevan before the first tag): see [`tools/release/README.md`](../tools/release/README.md).
 

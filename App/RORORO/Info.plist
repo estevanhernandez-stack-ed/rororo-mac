@@ -70,7 +70,7 @@
 	     by hard contract.
 	     ============================================================ -->
 	<key>SUFeedURL</key>
-	<string>https://626labs.github.io/rororo-mac/appcast.xml</string>
+	<string>https://estevanhernandez-stack-ed.github.io/rororo-mac/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>b5hOsbZVS61d3/wAN8hxf70HvfH3SOpuNVZES3QvhpI=</string>
 	<key>SUEnableInstallerLauncherService</key>
