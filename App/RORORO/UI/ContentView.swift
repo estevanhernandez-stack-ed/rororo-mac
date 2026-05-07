@@ -10,12 +10,16 @@ struct ContentView: View {
     @State private var showAddAccount = false
     @State private var showDiagnostics = false
     @State private var showAbout = false
+    @State private var showGames = false
 
     var body: some View {
-        AccountsListView(showAddAccount: $showAddAccount)
+        AccountsListView(showAddAccount: $showAddAccount, showGames: $showGames)
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
                     multiInstanceToggle
+                    Button { showGames = true } label: {
+                        Label("Games", systemImage: "gamecontroller")
+                    }
                     Button { showSettings = true } label: {
                         Label("Settings", systemImage: "gearshape")
                     }
@@ -26,6 +30,9 @@ struct ContentView: View {
                         Label("More", systemImage: "ellipsis.circle")
                     }
                 }
+            }
+            .sheet(isPresented: $showGames) {
+                GamesView(isPresented: $showGames)
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView()

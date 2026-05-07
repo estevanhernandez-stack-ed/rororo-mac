@@ -9,7 +9,6 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var multiInstanceEnabled = MultiInstanceState.shared.enabled
-    @State private var defaultGameURL = FavoriteGameStore.shared.defaultGameURL
     @State private var dangerZoneVisible = false
 
     var body: some View {
@@ -26,17 +25,6 @@ struct SettingsView: View {
                 Text(multiInstanceEnabled
                      ? "Each Launch As spawns a fresh Roblox instance via per-launch app copy + sem_unlink."
                      : "Multi-instance OFF: launches go to /Applications/Roblox.app and only one Roblox window can run at a time.")
-                    .font(Theme.Font.bodySmall)
-                    .foregroundStyle(Theme.Color.fg3)
-            }
-
-            section("Default game") {
-                TextField("https://www.roblox.com/games/…", text: $defaultGameURL)
-                    .textFieldStyle(.roundedBorder)
-                    .onChange(of: defaultGameURL) { _, newValue in
-                        FavoriteGameStore.shared.defaultGameURL = newValue
-                    }
-                Text("When you tap Launch As without a specific game, RORORO opens this URL.")
                     .font(Theme.Font.bodySmall)
                     .foregroundStyle(Theme.Color.fg3)
             }

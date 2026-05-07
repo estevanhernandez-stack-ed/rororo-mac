@@ -54,28 +54,6 @@ public final class FavoriteGameStore {
         favorites.first(where: { $0.isDefault })
     }
 
-    /// Backwards-compat shim for v0.1.x UI callers (AccountsListView,
-    /// SettingsView, GameSettingsSheet). Reads back the default favorite's
-    /// place URL; assigning a URL imports it as a favorite + marks default.
-    /// Removed in the v0.2 UI commit once those views switch to the typed
-    /// API.
-    public var defaultGameURL: String {
-        get {
-            guard let def = defaultGame() else { return "" }
-            return "https://www.roblox.com/games/\(def.placeId)"
-        }
-        set {
-            guard !newValue.isEmpty else { return }
-            guard case .place(let placeId) = LaunchTarget.fromUrl(newValue) else { return }
-            // Add or refresh — preserves isDefault if already in the list.
-            // If this is a brand-new entry, add() auto-marks the first
-            // entry as default. Force-promote in case there are already
-            // other favorites.
-            _ = add(placeId: placeId, universeId: 0, name: "Place \(placeId)", thumbnailURL: nil)
-            setDefault(placeId: placeId)
-        }
-    }
-
     // MARK: - Write
 
     /// Insert or update a favorite. The first entry added is automatically
