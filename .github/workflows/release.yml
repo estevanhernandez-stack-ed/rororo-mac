@@ -63,30 +63,17 @@ jobs:
           echo "Resolved sign_update at $SIGN_UPDATE_PATH"
 
       - name: Import Apple Developer ID certificate
-        env:
-          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-        run: |
-          set -euo pipefail
-          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain"
-          KEYCHAIN_PASSWORD="$MACOS_CERTIFICATE_PASSWORD"
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          echo "$MACOS_CERTIFICATE" | base64 --decode -o "$RUNNER_TEMP/cert.p12"
-          security import "$RUNNER_TEMP/cert.p12" \
-            -k "$KEYCHAIN_PATH" \
-            -P "$MACOS_CERTIFICATE_PASSWORD" \
-            -T /usr/bin/codesign \
-            -T /usr/bin/security
-          security set-key-partition-list \
-            -S apple-tool:,apple:,codesign: \
-            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          # Make this keychain the default search target so codesign finds the cert.
-          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+        # Hand-rolled `security create-keychain` + `security import` worked for
+        # the archive step but xcodebuild's exportArchive resolves the signing
+        # identity through a different code path that's keychain-search-list-
+        # sensitive across step boundaries (caught at v0.1.0 first run).
+        # apple-actions/import-codesign-certs is the well-trodden fix — it
+        # creates a build keychain, imports, persists the search list across
+        # subsequent steps, and unlocks for $RUNNER_TEMP lifetime.
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
+          p12-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
 
       - name: Notarize and DMG
         env:
