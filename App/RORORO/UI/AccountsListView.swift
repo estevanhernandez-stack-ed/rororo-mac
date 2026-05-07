@@ -318,10 +318,10 @@ private struct AccountRow: View {
         .padding(.vertical, Theme.Spacing.xs)
     }
 
-    /// Visual: a single rounded-rectangle that contains both the primary
-    /// label and a chevron dropdown, separated by a hairline. Looks like a
-    /// macOS popup-button-style split button. Primary tap launches the
-    /// current default; chevron tap opens a dropdown to switch.
+    /// Visual: one continuous brand gradient (cyan → teal) containing
+    /// the primary label and a chevron dropdown. No divider — the chevron
+    /// sits on the same surface, distinguished by its glyph + smaller pad.
+    /// Hairline outer border keeps it readable against the dark row surface.
     ///
     /// Picking from the dropdown sets the chosen target as the new
     /// cross-store default AND launches it — one click, persistent. The
@@ -334,19 +334,12 @@ private struct AccountRow: View {
                     .fontWeight(.semibold)
                     .foregroundStyle(Color.white)
                     .lineLimit(1)
-                    .truncationMode(.middle)
-                    .padding(.horizontal, 12)
+                    .padding(.leading, 12)
+                    .padding(.trailing, 8)
                     .padding(.vertical, 6)
-                    .frame(minWidth: 110)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .background(Theme.Color.productTeal)
-
-            // Hairline divider between primary face and chevron.
-            Rectangle()
-                .fill(Color.black.opacity(0.18))
-                .frame(width: 1, height: 26)
 
             Menu {
                 Button("Launch into default", action: onLaunchPrimary)
@@ -378,25 +371,35 @@ private struct AccountRow: View {
             } label: {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Color.white)
-                    .frame(width: 28, height: 26)
+                    .foregroundStyle(Color.white.opacity(0.95))
+                    .padding(.trailing, 10)
+                    .padding(.leading, 4)
+                    .padding(.vertical, 6)
                     .contentShape(Rectangle())
             }
             .menuIndicator(.hidden)
             .menuStyle(.borderlessButton)
-            .background(Theme.Color.productTeal)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .background(
+            LinearGradient(
+                colors: [Theme.Color.brandCyan, Theme.Color.productTeal],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(Color.black.opacity(0.18), lineWidth: 0.5)
+        )
     }
 
-    /// Primary button text. Shows the current default's name when one is
-    /// set so the user can tell what Launch As will do at a glance —
-    /// "Launch As" alone was ambiguous (caught at v0.2 manual smoke).
+    /// Primary button text — short. Long target names blew up the row
+    /// width at v0.2 manual smoke; the dropdown items already show the
+    /// full target name, so this just communicates "we're targeting the
+    /// default" without naming it.
     private var primaryLabel: String {
-        if let name = defaultDisplayName {
-            return "Launch As — \(name)"
-        }
-        return "Launch As"
+        defaultDisplayName != nil ? "Launch As default" : "Launch As"
     }
 
     @ViewBuilder
