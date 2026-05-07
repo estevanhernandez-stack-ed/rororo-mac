@@ -54,13 +54,19 @@ printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > "$TMP_KEY"
 chmod 600 "$TMP_KEY"
 
 # ---------------------------------------------------------------------------
-# Pull the release list (newest-first by createdAt).
+# Pull the release list (newest-first by createdAt) directly from the GitHub
+# REST API — `gh release list --json` doesn't expose `assets` in older gh
+# CLI versions (and the runner version varies). The REST endpoint is stable.
+# Normalize field names so the rest of the script is unchanged.
 # ---------------------------------------------------------------------------
-RELEASES_JSON="$(gh release list \
-  --repo "$GITHUB_REPO" \
-  --limit 50 \
-  --json tagName,name,createdAt,assets,isPrerelease,url)"
-RELEASES_JSON="$(echo "$RELEASES_JSON" | jq 'sort_by(.createdAt) | reverse')"
+RELEASES_JSON="$(gh api "repos/$GITHUB_REPO/releases?per_page=50" \
+  --jq '[.[] | {
+    tagName: .tag_name,
+    name: (.name // .tag_name),
+    createdAt: .created_at,
+    isPrerelease: .prerelease,
+    assets: [.assets[] | {name: .name, url: .url, browser_download_url: .browser_download_url}]
+  }] | sort_by(.createdAt) | reverse')"
 
 # ---------------------------------------------------------------------------
 # Render appcast head.
