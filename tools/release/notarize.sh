@@ -121,13 +121,26 @@ echo "==> [5/8] Staple the notary ticket onto the .app"
 xcrun stapler staple "$APP_PATH"
 xcrun stapler validate "$APP_PATH"
 
-echo "==> [6/8] Build a DMG from the stapled .app"
-hdiutil create \
-  -volname RORORO \
-  -srcfolder "$EXPORT_DIR" \
-  -ov \
-  -format UDZO \
-  "$DMG_PATH"
+echo "==> [6/8] Build a branded DMG from the stapled .app"
+# create-dmg lays out a branded install window: navy background with the
+# cyan→magenta hairline + RORORO wordmark, .app icon at left, /Applications
+# drop-link at right. dmg-background@2x.png sits next to dmg-background.png
+# so create-dmg picks the retina variant on @2x displays.
+#
+# create-dmg refuses to overwrite an existing DMG; clear it first.
+rm -f "$DMG_PATH"
+create-dmg \
+  --volname "RORORO" \
+  --background "$REPO_ROOT/tools/release/dmg-background.png" \
+  --window-pos 200 120 \
+  --window-size 540 380 \
+  --icon-size 96 \
+  --icon "RORORO.app" 140 180 \
+  --app-drop-link 400 180 \
+  --hide-extension "RORORO.app" \
+  --no-internet-enable \
+  "$DMG_PATH" \
+  "$APP_PATH"
 
 echo "==> [6.5/8] Submit the DMG to the notary service"
 # The .app's notary ticket lives inside the .app and survives DMG copy,

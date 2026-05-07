@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/marketing/hero.png" alt="RORORO Mac — Mac-native multi-Roblox launcher" width="100%" />
+</p>
+
 # RORORO Mac
 
 _Mac-native multi-launcher for Roblox — run multiple Roblox clients on macOS, signed in as different saved accounts._
