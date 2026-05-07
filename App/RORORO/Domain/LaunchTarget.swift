@@ -78,6 +78,17 @@ extension LaunchTarget {
             return .place(placeId: bare)
         }
 
+        // Friend-follow profile URL: `roblox.com/users/<id>/profile` or
+        // `roblox.com/users/<id>`. Resolves to `.followFriend(userId:)`
+        // — the `RequestFollowUser` request flow on Roblox's launcher
+        // endpoint, which respects the friend's privacy + server allowlist.
+        if let userId = firstCaptureAsInt64(
+            in: trimmed,
+            pattern: #"roblox\.com/users/(\d+)"#
+        ), userId > 0 {
+            return .followFriend(userId: userId)
+        }
+
         guard let placeId = firstCaptureAsInt64(
             in: trimmed,
             pattern: #"(?:placeId=|roblox\.com/games/)(\d+)"#

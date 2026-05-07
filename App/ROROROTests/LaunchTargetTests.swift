@@ -86,11 +86,26 @@ final class LaunchTargetTests: XCTestCase {
             "   ",
             "not a url",
             "https://example.com/anything",
-            "https://www.roblox.com/users/12345/profile",
         ]
         for input in cases {
             XCTAssertNil(LaunchTarget.fromUrl(input), "expected nil for: \(input ?? "nil")")
         }
+    }
+
+    // MARK: - Friend-follow profile URLs
+
+    func testFromUrl_ProfileURL_ReturnsFollowFriend() {
+        XCTAssertEqual(
+            LaunchTarget.fromUrl("https://www.roblox.com/users/12345/profile"),
+            .followFriend(userId: 12345)
+        )
+    }
+
+    func testFromUrl_ProfileURLWithoutSuffix_ReturnsFollowFriend() {
+        XCTAssertEqual(
+            LaunchTarget.fromUrl("https://www.roblox.com/users/98765"),
+            .followFriend(userId: 98765)
+        )
     }
 
     func testFromUrl_ZeroPlaceId_ReturnsNil() {

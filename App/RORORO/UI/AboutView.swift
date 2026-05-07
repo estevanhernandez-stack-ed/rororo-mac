@@ -29,6 +29,18 @@ struct AboutView: View {
                 .font(Theme.Font.mono)
                 .foregroundStyle(Theme.Color.fg3)
 
+            VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                Text("What's new in v0.2".uppercased())
+                    .font(Theme.Font.monoMicro)
+                    .foregroundStyle(Theme.Color.fg3)
+                    .tracking(1.4)
+                Text("Saved favorite games + private servers, picker dropdown on every Launch As, share-token URL resolver, branded DMG + app icon. Click Games in the toolbar.")
+                    .font(Theme.Font.bodySmall)
+                    .foregroundStyle(Theme.Color.fg2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, Theme.Spacing.xs)
+
             Spacer()
 
             VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
@@ -51,7 +63,7 @@ struct AboutView: View {
                 .buttonStyle(.bordered)
         }
         .padding(Theme.Spacing.lg)
-        .frame(width: 380, height: 320)
+        .frame(width: 420, height: 420)
         .background(Theme.Color.bgPage)
     }
 }

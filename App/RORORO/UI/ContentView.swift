@@ -17,15 +17,27 @@ struct ContentView: View {
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
                     multiInstanceToggle
-                    Button { showGames = true } label: {
+                    // .foregroundStyle on the BUTTON (not on the Label
+                    // inside it) so the colored region matches the
+                    // button's hit area; otherwise SwiftUI splits the
+                    // hover region and .help() doesn't fire on the
+                    // colored portion. .help() applied as the OUTERMOST
+                    // modifier so it sees the full button tree.
+                    Button {
+                        showGames = true
+                    } label: {
                         Label("Games", systemImage: "gamecontroller.fill")
-                            .foregroundStyle(Theme.Color.productTeal)
                     }
+                    .foregroundStyle(Theme.Color.productTeal)
                     .help("Games — manage favorite games and saved private servers")
-                    Button { showSettings = true } label: {
+
+                    Button {
+                        showSettings = true
+                    } label: {
                         Label("Settings", systemImage: "gearshape")
                     }
-                    .help("Settings — multi-instance toggle, default game URL, updates")
+                    .help("Settings — multi-instance toggle, updates")
+
                     Menu {
                         Button("Diagnostics") { showDiagnostics = true }
                         Button("About RORORO") { showAbout = true }
@@ -51,7 +63,7 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showAbout) {
                 AboutView(isPresented: $showAbout)
-                    .frame(width: 380, height: 320)
+                    .frame(width: 420, height: 420)
             }
             .background(Theme.Color.bgPage)
     }
@@ -66,9 +78,9 @@ struct ContentView: View {
                 "Multi-instance",
                 systemImage: state.enabled ? "square.stack.3d.up.fill" : "square.stack.3d.up"
             )
-            .foregroundStyle(state.enabled ? Theme.Color.brandCyan : Theme.Color.fg3)
         }
         .toggleStyle(.button)
+        .foregroundStyle(state.enabled ? Theme.Color.brandCyan : Theme.Color.fg3)
         .help(
             state.enabled
                 ? "Multi-instance ON — Launch As spawns a fresh Roblox window for each account. Click to disable."
