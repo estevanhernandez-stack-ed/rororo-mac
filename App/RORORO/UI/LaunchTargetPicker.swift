@@ -15,7 +15,16 @@ struct LaunchTargetPicker: View {
     let onCancel: () -> Void
 
     @State private var customURL = ""
-    @State private var customPreview: LaunchTarget?
+    @State private var customState: CustomState = .empty
+    @State private var customResolveID = UUID()
+
+    private enum CustomState: Equatable {
+        case empty
+        case unparseable
+        case resolvingShareLink
+        case shareLinkFailed(String)
+        case ready(LaunchTarget)
+    }
 
     private let favoriteStore = FavoriteGameStore.shared
     private let serverStore = PrivateServerStore.shared
@@ -79,26 +88,10 @@ struct LaunchTargetPicker: View {
                             )
                             .textFieldStyle(.roundedBorder)
                             .onChange(of: customURL) { _, newValue in
-                                customPreview = LaunchTarget.fromUrl(newValue)
+                                handleCustomURLChanged(newValue)
                             }
 
-                            if let target = customPreview {
-                                HStack {
-                                    Text(describe(target))
-                                        .font(Theme.Font.mono)
-                                        .foregroundStyle(Theme.Color.fg2)
-                                    Spacer()
-                                    Button("Launch") {
-                                        onLaunch(target, nil)
-                                    }
-                                    .buttonStyle(.borderedProminent)
-                                    .tint(Theme.Color.productTeal)
-                                }
-                            } else if !customURL.isEmpty {
-                                Text("Couldn't parse — paste a Roblox URL or numeric place id.")
-                                    .font(Theme.Font.bodySmall)
-                                    .foregroundStyle(Theme.Color.stateWarn)
-                            }
+                            customStatusRow
                         }
                     }
 
@@ -197,5 +190,89 @@ struct LaunchTargetPicker: View {
             return "Private server (\(kind == .linkCode ? "share link" : "access code")) on place \(id)"
         case .followFriend(let id): return "Follow user \(id)"
         }
+    }
+
+    @ViewBuilder
+    private var customStatusRow: some View {
+        switch customState {
+        case .empty:
+            EmptyView()
+        case .unparseable:
+            Text("Couldn't parse — paste a Roblox URL or numeric place id.")
+                .font(Theme.Font.bodySmall)
+                .foregroundStyle(Theme.Color.stateWarn)
+        case .resolvingShareLink:
+            HStack(spacing: Theme.Spacing.xs) {
+                ProgressView().controlSize(.small)
+                Text("Resolving share-token URL…")
+                    .font(Theme.Font.bodySmall)
+                    .foregroundStyle(Theme.Color.fg3)
+            }
+        case .shareLinkFailed(let reason):
+            Text("Share-link resolve failed: \(reason)")
+                .font(Theme.Font.bodySmall)
+                .foregroundStyle(Theme.Color.stateWarn)
+        case .ready(let target):
+            HStack {
+                Text(describe(target))
+                    .font(Theme.Font.mono)
+                    .foregroundStyle(Theme.Color.fg2)
+                Spacer()
+                Button("Launch") {
+                    onLaunch(target, nil)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.Color.productTeal)
+            }
+        }
+    }
+
+    private func handleCustomURLChanged(_ newValue: String) {
+        if let target = LaunchTarget.fromUrl(newValue) {
+            customState = .ready(target)
+            return
+        }
+        // Share-token URL form — needs server-side resolution against
+        // the launching account's cookie.
+        if let parse = LaunchTarget.tryParseShareLink(newValue), parse.linkType.lowercased() == "server" {
+            customState = .resolvingShareLink
+            let token = UUID()
+            customResolveID = token
+            Task { @MainActor in
+                do {
+                    let cookie = try AccountStore.shared.cookie(for: account.userId)
+                    guard let cookie, !cookie.isEmpty else {
+                        guard customResolveID == token else { return }
+                        customState = .shareLinkFailed("No cookie stored for \(account.displayName).")
+                        return
+                    }
+                    let resolved = try await RobloxApi.resolveShareLink(
+                        cookie: cookie,
+                        code: parse.code,
+                        linkType: parse.linkType
+                    )
+                    guard customResolveID == token else { return }
+                    guard let resolution = resolved,
+                          resolution.placeId > 0,
+                          !resolution.linkCode.isEmpty else {
+                        customState = .shareLinkFailed("Roblox returned no invite data.")
+                        return
+                    }
+                    customState = .ready(.privateServer(
+                        placeId: resolution.placeId,
+                        code: resolution.linkCode,
+                        kind: .linkCode
+                    ))
+                } catch RobloxApi.APIError.cookieExpired {
+                    guard customResolveID == token else { return }
+                    customState = .shareLinkFailed("\(account.displayName)'s session expired.")
+                } catch {
+                    guard customResolveID == token else { return }
+                    customState = .shareLinkFailed(error.localizedDescription)
+                }
+            }
+            return
+        }
+        customState = newValue.isEmpty ? .empty : .unparseable
     }
 }

@@ -22,6 +22,8 @@ struct AddPrivateServerSheet: View {
     enum FetchState: Equatable {
         case empty
         case unparseable
+        case resolvingShareLink(code: String, linkType: String)
+        case shareLinkResolveFailed(reason: String)
         case fetching(placeId: Int64, code: String, kind: PrivateServerCodeKind)
         case ready(placeId: Int64, code: String, kind: PrivateServerCodeKind, metadata: RobloxApi.GameMetadata?)
     }
@@ -42,7 +44,7 @@ struct AddPrivateServerSheet: View {
                     .tracking(1.4)
                     .foregroundStyle(Theme.Color.fg3)
 
-                Text("Paste a Roblox private-server share URL — `roblox.com/games/<id>?privateServerLinkCode=…` or an `accessCode=…` launcher URI.")
+                Text("Paste a Roblox private-server share URL — the share-token form (`roblox.com/share?code=…&type=Server`), the resolved share-link form (`?privateServerLinkCode=…`), or an `accessCode=…` launcher URI all work.")
                     .font(Theme.Font.bodySmall)
                     .foregroundStyle(Theme.Color.fg2)
 
@@ -88,7 +90,17 @@ struct AddPrivateServerSheet: View {
             EmptyView()
         case .unparseable:
             previewBox(
-                text: "Couldn't parse — paste a Roblox URL with a `privateServerLinkCode=` or `accessCode=` parameter.",
+                text: "Couldn't parse — paste a Roblox URL with `?privateServerLinkCode=`, `?accessCode=`, or `roblox.com/share?code=…&type=Server`.",
+                color: Theme.Color.stateWarn
+            )
+        case .resolvingShareLink:
+            previewBox(
+                text: "Resolving share-token URL with Roblox…",
+                color: Theme.Color.fg3
+            )
+        case .shareLinkResolveFailed(let reason):
+            previewBox(
+                text: "Couldn't resolve the share-token URL. \(reason)",
                 color: Theme.Color.stateWarn
             )
         case .fetching(let placeId, _, let kind):
@@ -155,10 +167,23 @@ struct AddPrivateServerSheet: View {
     }
 
     private func handlePasteChanged(_ newValue: String) {
-        guard case .privateServer(let placeId, let code, let kind) = LaunchTarget.fromUrl(newValue) else {
-            fetchState = newValue.isEmpty ? .empty : .unparseable
+        // Try the standard parser first — handles `?privateServerLinkCode=`,
+        // `linkCode=`, `?accessCode=` URL forms.
+        if case .privateServer(let placeId, let code, let kind) = LaunchTarget.fromUrl(newValue) {
+            fetchPlaceMetadata(placeId: placeId, code: code, kind: kind)
             return
         }
+        // Fall back to the newer `roblox.com/share?code=…&type=Server` form.
+        // Token is opaque locally — needs a server round-trip via
+        // `sharelinks/v1/resolve-link` (authenticated endpoint).
+        if let parse = LaunchTarget.tryParseShareLink(newValue), parse.linkType.lowercased() == "server" {
+            fetchShareLink(parse: parse)
+            return
+        }
+        fetchState = newValue.isEmpty ? .empty : .unparseable
+    }
+
+    private func fetchPlaceMetadata(placeId: Int64, code: String, kind: PrivateServerCodeKind) {
         fetchState = .fetching(placeId: placeId, code: code, kind: kind)
         let token = UUID()
         fetchTaskID = token
@@ -166,12 +191,69 @@ struct AddPrivateServerSheet: View {
             let metadata = try? await RobloxApi.getGameMetadata(placeId: placeId)
             guard fetchTaskID == token else { return }
             fetchState = .ready(placeId: placeId, code: code, kind: kind, metadata: metadata)
-            // Pre-fill the display name with the place name as a starting point.
-            // User can edit before saving.
+            // Pre-fill the display name with the place name as a starting
+            // point. User can edit before saving.
             if name.trimmingCharacters(in: .whitespaces).isEmpty,
                let metadata {
                 name = metadata.name
             }
+        }
+    }
+
+    private func fetchShareLink(parse: LaunchTarget.ShareLinkParse) {
+        fetchState = .resolvingShareLink(code: parse.code, linkType: parse.linkType)
+        let token = UUID()
+        fetchTaskID = token
+
+        // Share-link resolution is authenticated — needs any saved
+        // account's cookie. UI prompts the user to add an account if
+        // none exist.
+        guard let account = AccountStore.shared.accounts.first else {
+            fetchState = .shareLinkResolveFailed(
+                reason: "Add a Roblox account first — share-token URLs need a logged-in cookie to resolve."
+            )
+            return
+        }
+        let cookie: String?
+        do {
+            cookie = try AccountStore.shared.cookie(for: account.userId)
+        } catch {
+            fetchState = .shareLinkResolveFailed(reason: "Couldn't read the cookie for \(account.displayName).")
+            return
+        }
+        guard let cookie, !cookie.isEmpty else {
+            fetchState = .shareLinkResolveFailed(reason: "No cookie stored for \(account.displayName). Re-add the account.")
+            return
+        }
+
+        Task { @MainActor in
+            let resolution: RobloxApi.ShareLinkResolution?
+            do {
+                resolution = try await RobloxApi.resolveShareLink(
+                    cookie: cookie,
+                    code: parse.code,
+                    linkType: parse.linkType
+                )
+            } catch RobloxApi.APIError.cookieExpired {
+                guard fetchTaskID == token else { return }
+                fetchState = .shareLinkResolveFailed(
+                    reason: "\(account.displayName)'s session expired. Remove and re-add the account."
+                )
+                return
+            } catch {
+                guard fetchTaskID == token else { return }
+                fetchState = .shareLinkResolveFailed(reason: error.localizedDescription)
+                return
+            }
+            guard fetchTaskID == token else { return }
+            guard let resolved = resolution, resolved.placeId > 0, !resolved.linkCode.isEmpty else {
+                fetchState = .shareLinkResolveFailed(
+                    reason: "Roblox returned no private-server invite data. The link may be expired or non-Server type."
+                )
+                return
+            }
+            // Resolved → run normal place metadata fetch.
+            fetchPlaceMetadata(placeId: resolved.placeId, code: resolved.linkCode, kind: .linkCode)
         }
     }
 

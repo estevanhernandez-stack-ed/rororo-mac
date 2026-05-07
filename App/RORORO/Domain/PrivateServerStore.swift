@@ -110,6 +110,15 @@ public final class PrivateServerStore {
         save()
     }
 
+    /// User-facing rename. Trims whitespace; no-ops on empty input.
+    public func rename(id: UUID, to newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let idx = servers.firstIndex(where: { $0.id == id }) else { return }
+        servers[idx].name = trimmed
+        save()
+    }
+
     // MARK: - Persistence
 
     private struct Blob: Codable {

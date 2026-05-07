@@ -128,6 +128,16 @@ public final class FavoriteGameStore {
         save()
     }
 
+    /// User-facing rename. Trims whitespace; no-ops on empty input so we
+    /// don't write blank rows.
+    public func rename(placeId: Int64, to newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let idx = favorites.firstIndex(where: { $0.placeId == placeId }) else { return }
+        favorites[idx].name = trimmed
+        save()
+    }
+
     // MARK: - Persistence
 
     private struct Blob: Codable {

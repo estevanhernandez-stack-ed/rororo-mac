@@ -74,6 +74,22 @@ public enum RobloxApi {
         }
     }
 
+    /// Result of resolving a `roblox.com/share?code=X&type=Server` token
+    /// against Roblox's `sharelinks/v1/resolve-link` endpoint. Only valid
+    /// for `linkType == "Server"` (private-server share links); other link
+    /// types (Game / Profile) come back with placeId == 0.
+    public struct ShareLinkResolution: Equatable, Sendable {
+        public let linkType: String
+        public let placeId: Int64
+        public let linkCode: String
+
+        public init(linkType: String, placeId: Int64, linkCode: String) {
+            self.linkType = linkType
+            self.placeId = placeId
+            self.linkCode = linkCode
+        }
+    }
+
     public enum APIError: Error, Equatable {
         /// Roblox returned 401 — the user's `.ROBLOSECURITY` cookie is no
         /// longer valid. UI re-prompts for login.
@@ -175,6 +191,50 @@ public enum RobloxApi {
                 message: "Failed to decode authenticated-user response: \(error.localizedDescription)"
             )
         }
+    }
+
+    /// Resolve a `roblox.com/share?code=X&type=Y` token against Roblox's
+    /// `sharelinks/v1/resolve-link` endpoint. Used by AddPrivateServerSheet
+    /// + LaunchTargetPicker when the user pastes the newer share-token URL
+    /// form (the token is opaque locally — only this endpoint can turn it
+    /// into the (placeId, linkCode) pair the launcher URI builder needs).
+    ///
+    /// Authenticated — needs a saved account's `.ROBLOSECURITY` cookie.
+    /// Returns nil on resolve failure (token expired / wrong type / etc.).
+    /// Throws `APIError.cookieExpired` on 401 so callers can prompt the user.
+    public static func resolveShareLink(
+        cookie: String,
+        code: String,
+        linkType: String = "Server"
+    ) async throws -> ShareLinkResolution? {
+        guard !cookie.isEmpty, !code.isEmpty else { return nil }
+        let normalizedLinkType = linkType.isEmpty ? "Server" : linkType
+
+        // Same CSRF dance as auth-ticket: first POST surfaces the token
+        // (or returns 200 directly on tenants that skip the challenge),
+        // second POST echoes it back.
+        let body: [String: String] = ["linkId": code, "linkType": normalizedLinkType]
+        let bodyData = try JSONSerialization.data(withJSONObject: body)
+
+        let (firstStatus, firstHeaders, firstBody) = try await postShareLink(cookie: cookie, body: bodyData, csrfToken: nil)
+        try mapFatalStatus(firstStatus)
+
+        // 200 directly: parse + return.
+        if (200..<300).contains(firstStatus) {
+            return parseShareLinkResponse(firstBody, requestedLinkType: normalizedLinkType)
+        }
+
+        // 403 with x-csrf-token: do the second call.
+        guard firstStatus == 403,
+              let csrfToken = headerValue(firstHeaders, name: "x-csrf-token"),
+              !csrfToken.isEmpty else {
+            return nil
+        }
+
+        let (secondStatus, _, secondBody) = try await postShareLink(cookie: cookie, body: bodyData, csrfToken: csrfToken)
+        try mapFatalStatus(secondStatus)
+        guard (200..<300).contains(secondStatus) else { return nil }
+        return parseShareLinkResponse(secondBody, requestedLinkType: normalizedLinkType)
     }
 
     /// Fetch metadata for a Roblox place by placeId. Three-call sequence
@@ -318,6 +378,49 @@ public enum RobloxApi {
         struct Item: Decodable {
             let imageUrl: String
         }
+    }
+
+    private static func postShareLink(
+        cookie: String,
+        body: Data,
+        csrfToken: String?
+    ) async throws -> (status: Int, headers: [AnyHashable: Any], body: Data) {
+        var request = URLRequest(url: URL(string: "https://apis.roblox.com/sharelinks/v1/resolve-link")!)
+        request.httpMethod = "POST"
+        request.setValue(".ROBLOSECURITY=\(cookie)", forHTTPHeaderField: "Cookie")
+        request.setValue(referer, forHTTPHeaderField: "Referer")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let csrfToken, !csrfToken.isEmpty {
+            request.setValue(csrfToken, forHTTPHeaderField: "X-CSRF-TOKEN")
+        }
+        request.httpBody = body
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.unexpected(status: 0, message: "Non-HTTP response from sharelinks endpoint.")
+        }
+        return (http.statusCode, http.allHeaderFields, data)
+    }
+
+    private static func parseShareLinkResponse(_ data: Data, requestedLinkType: String) -> ShareLinkResolution? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        let linkType = (json["linkType"] as? String) ?? requestedLinkType
+        // Server kind: privateServerInviteData carries placeId + linkCode.
+        // Status must be "Valid". Other types come back without invite data.
+        if let invite = json["privateServerInviteData"] as? [String: Any],
+           let status = invite["status"] as? String,
+           status.caseInsensitiveCompare("Valid") == .orderedSame,
+           let placeId = (invite["placeId"] as? Int64) ?? (invite["placeId"] as? Int).map(Int64.init),
+           let linkCode = invite["linkCode"] as? String,
+           placeId > 0,
+           !linkCode.isEmpty {
+            return ShareLinkResolution(linkType: linkType, placeId: placeId, linkCode: linkCode)
+        }
+        // Non-server link types or invalid invite data — return a zero
+        // placeholder so callers can branch.
+        return ShareLinkResolution(linkType: linkType, placeId: 0, linkCode: "")
     }
 
     private static func postAuthTicket(

@@ -15,8 +15,24 @@ struct GamesView: View {
     @State private var selected: Tab = .favorites
     @State private var showAddFavorite = false
     @State private var showAddPrivateServer = false
+    @State private var renameTarget: RenameTarget?
 
     private enum Tab: Hashable { case favorites, privateServers }
+
+    /// Identifier-with-payload for the rename sheet. Identifiable so
+    /// .sheet(item:) opens fresh per-target. fileprivate so the
+    /// RenameSheet at file scope can reference the enum cases.
+    fileprivate enum RenameTarget: Identifiable, Equatable {
+        case favorite(placeId: Int64, currentName: String)
+        case server(id: UUID, currentName: String)
+
+        var id: String {
+            switch self {
+            case .favorite(let placeId, _): return "fav-\(placeId)"
+            case .server(let serverId, _): return "ps-\(serverId.uuidString)"
+            }
+        }
+    }
 
     private let favoriteStore = FavoriteGameStore.shared
     private let serverStore = PrivateServerStore.shared
@@ -54,6 +70,23 @@ struct GamesView: View {
         }
         .sheet(isPresented: $showAddPrivateServer) {
             AddPrivateServerSheet(isPresented: $showAddPrivateServer)
+        }
+        .sheet(item: $renameTarget) { target in
+            RenameSheet(target: target) { newName in
+                applyRename(target: target, newName: newName)
+                renameTarget = nil
+            } onCancel: {
+                renameTarget = nil
+            }
+        }
+    }
+
+    private func applyRename(target: RenameTarget, newName: String) {
+        switch target {
+        case .favorite(let placeId, _):
+            favoriteStore.rename(placeId: placeId, to: newName)
+        case .server(let serverId, _):
+            serverStore.rename(id: serverId, to: newName)
         }
     }
 
@@ -100,6 +133,9 @@ struct GamesView: View {
                 FavoriteRow(
                     game: game,
                     onSetDefault: { favoriteStore.setDefault(placeId: game.placeId) },
+                    onRename: {
+                        renameTarget = .favorite(placeId: game.placeId, currentName: game.name)
+                    },
                     onRemove: { favoriteStore.remove(placeId: game.placeId) }
                 )
             }
@@ -149,6 +185,9 @@ struct GamesView: View {
             ForEach(serverStore.servers) { server in
                 PrivateServerRow(
                     server: server,
+                    onRename: {
+                        renameTarget = .server(id: server.id, currentName: server.name)
+                    },
                     onRemove: { serverStore.remove(id: server.id) }
                 )
             }
@@ -157,11 +196,78 @@ struct GamesView: View {
     }
 }
 
+// MARK: - RenameSheet
+
+private struct RenameSheet: View {
+    let target: GamesView.RenameTarget
+    let onSave: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var draft: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+            Text("Rename")
+                .font(Theme.Font.heading2)
+                .foregroundStyle(Theme.Color.fg1)
+
+            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                Text(label.uppercased())
+                    .font(Theme.Font.monoMicro)
+                    .tracking(1.4)
+                    .foregroundStyle(Theme.Color.fg3)
+
+                TextField("Display name", text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { commit() }
+            }
+
+            Spacer()
+
+            HStack {
+                Button("Cancel", role: .cancel, action: onCancel)
+                Spacer()
+                Button("Save", action: commit)
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.Color.productTeal)
+                    .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(Theme.Spacing.lg)
+        .frame(width: 420, height: 220)
+        .background(Theme.Color.bgPage)
+        .onAppear {
+            draft = currentName
+        }
+    }
+
+    private var label: String {
+        switch target {
+        case .favorite: return "Favorite name"
+        case .server: return "Private-server name"
+        }
+    }
+
+    private var currentName: String {
+        switch target {
+        case .favorite(_, let name), .server(_, let name): return name
+        }
+    }
+
+    private func commit() {
+        let trimmed = draft.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        onSave(trimmed)
+    }
+}
+
 // MARK: - Rows
 
 private struct FavoriteRow: View {
     let game: FavoriteGame
     let onSetDefault: () -> Void
+    let onRename: () -> Void
     let onRemove: () -> Void
 
     var body: some View {
@@ -191,6 +297,7 @@ private struct FavoriteRow: View {
             }
             Spacer()
             Menu {
+                Button("Rename…", action: onRename)
                 if !game.isDefault {
                     Button("Set as default", action: onSetDefault)
                 }
@@ -233,6 +340,7 @@ private struct FavoriteRow: View {
 
 private struct PrivateServerRow: View {
     let server: SavedPrivateServer
+    let onRename: () -> Void
     let onRemove: () -> Void
 
     var body: some View {
@@ -248,6 +356,8 @@ private struct PrivateServerRow: View {
             }
             Spacer()
             Menu {
+                Button("Rename…", action: onRename)
+                Divider()
                 Button("Remove", role: .destructive, action: onRemove)
             } label: {
                 Image(systemName: "ellipsis")

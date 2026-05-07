@@ -31,6 +31,18 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026 626 Labs LLC. All rights reserved.</string>
 
+	<!-- Single-instance enforcement on RORORO itself. Without this,
+	     the OS will spawn a second RORORO when a `roblox-player://`
+	     URL is clicked while RORORO is already running — the new
+	     instance handles the URL and the old one keeps its tray.
+	     With it, the URL routes to the existing instance via
+	     .onOpenURL (caught at v0.2 manual smoke 2026-05-07: user
+	     saw "another rororo" appear when clicking Play in a browser).
+	     This does NOT affect the per-instance Roblox copies — those
+	     are different .app bundles via RobloxAppCopier. -->
+	<key>LSMultipleInstancesProhibited</key>
+	<true/>
+
 	<!-- ============================================================
 	     `roblox-player://` URL scheme registration (Phase 3).
 	     When multi-instance is ON, RORORO claims this scheme via
