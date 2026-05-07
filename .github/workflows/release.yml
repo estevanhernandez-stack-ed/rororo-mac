@@ -37,8 +37,8 @@ jobs:
           xcodebuild -version
           swift --version
 
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: Install XcodeGen and create-dmg
+        run: brew install xcodegen create-dmg
 
       - name: Generate Xcode project
         working-directory: App
