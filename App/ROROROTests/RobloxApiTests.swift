@@ -182,6 +182,108 @@ final class RobloxApiTests: XCTestCase {
         }
     }
 
+    // MARK: - getUserProfile
+
+    func testGetUserProfile_HappyPath_ReturnsAllFields() async throws {
+        let json = #"{"id": 12345, "name": "tester", "displayName": "Tester Display"}"#
+        URLProtocolStub.enqueue(
+            status: 200,
+            headers: ["Content-Type": "application/json"],
+            body: json.data(using: .utf8)
+        )
+
+        let profile = try await RobloxApi.getUserProfile(cookie: testCookie)
+
+        XCTAssertEqual(profile.userId, 12345)
+        XCTAssertEqual(profile.username, "tester")
+        XCTAssertEqual(profile.displayName, "Tester Display")
+    }
+
+    func testGetUserProfile_401_ThrowsCookieExpired() async {
+        URLProtocolStub.enqueue(status: 401)
+        await assertThrows(RobloxApi.APIError.cookieExpired) {
+            _ = try await RobloxApi.getUserProfile(cookie: testCookie)
+        }
+    }
+
+    func testGetUserProfile_500_ThrowsTransient() async {
+        URLProtocolStub.enqueue(status: 500)
+        do {
+            _ = try await RobloxApi.getUserProfile(cookie: testCookie)
+            XCTFail("Expected transient")
+        } catch RobloxApi.APIError.transient {
+            // ok
+        } catch {
+            XCTFail("Wrong error: \(error)")
+        }
+    }
+
+    func testGetUserProfile_RejectsEmptyCookie() async {
+        do {
+            _ = try await RobloxApi.getUserProfile(cookie: "")
+            XCTFail("Expected unexpected error")
+        } catch RobloxApi.APIError.unexpected {
+            // ok
+        } catch {
+            XCTFail("Wrong error: \(error)")
+        }
+    }
+
+    func testGetUserProfile_SendsCookieAndUserAgent() async throws {
+        let json = #"{"id": 1, "name": "x", "displayName": "X"}"#
+        URLProtocolStub.enqueue(
+            status: 200,
+            headers: ["Content-Type": "application/json"],
+            body: json.data(using: .utf8)
+        )
+
+        _ = try await RobloxApi.getUserProfile(cookie: testCookie)
+
+        let request = URLProtocolStub.capturedRequests[0]
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), ".ROBLOSECURITY=\(testCookie)")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "User-Agent"), RobloxApi.userAgent)
+    }
+
+    // MARK: - getAvatarHeadshotURL
+
+    func testGetAvatarHeadshotURL_HappyPath_ReturnsURL() async throws {
+        let json = #"{"data":[{"imageUrl":"https://tr.rbxcdn.com/avatar.png"}]}"#
+        URLProtocolStub.enqueue(
+            status: 200,
+            headers: ["Content-Type": "application/json"],
+            body: json.data(using: .utf8)
+        )
+
+        let url = try await RobloxApi.getAvatarHeadshotURL(userId: 12345)
+        XCTAssertEqual(url, URL(string: "https://tr.rbxcdn.com/avatar.png"))
+    }
+
+    func testGetAvatarHeadshotURL_EmptyData_ReturnsNil() async throws {
+        URLProtocolStub.enqueue(
+            status: 200,
+            headers: ["Content-Type": "application/json"],
+            body: #"{"data": []}"#.data(using: .utf8)
+        )
+
+        let url = try await RobloxApi.getAvatarHeadshotURL(userId: 12345)
+        XCTAssertNil(url)
+    }
+
+    func testGetAvatarHeadshotURL_ServerError_ReturnsNil() async throws {
+        URLProtocolStub.enqueue(status: 500)
+
+        // Soft-failure — no throw; just nil. Avatar is best-effort UI polish.
+        let url = try await RobloxApi.getAvatarHeadshotURL(userId: 12345)
+        XCTAssertNil(url)
+    }
+
+    func testGetAvatarHeadshotURL_NonPositiveUserId_ReturnsNil() async throws {
+        let zero = try await RobloxApi.getAvatarHeadshotURL(userId: 0)
+        XCTAssertNil(zero)
+        let negative = try await RobloxApi.getAvatarHeadshotURL(userId: -1)
+        XCTAssertNil(negative)
+    }
+
     // MARK: - Helpers
 
     private func assertThrows<E: Error & Equatable>(

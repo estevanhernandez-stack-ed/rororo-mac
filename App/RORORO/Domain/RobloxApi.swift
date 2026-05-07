@@ -1,11 +1,12 @@
 // RobloxApi.swift
 // Domain — minimal HTTP client for Roblox endpoints needed by the launcher.
 //
-// Phase 2 scope: just `getAuthTicket(cookie:)` — the load-bearing call that
+// Phase 2 scope: `getAuthTicket(cookie:)` — the load-bearing call that
 // turns a `.ROBLOSECURITY` cookie into a one-shot RBX-Authentication-Ticket
-// the engine pastes into the `roblox-player:` URI. User-profile / avatar /
-// search / presence endpoints (also present in RORORO Windows's RobloxApi.cs)
-// land at Phase 4 alongside the WKWebView account-capture flow.
+// the engine pastes into the `roblox-player:` URI.
+// Phase 4 adds: `getUserProfile(cookie:)` for /users/authenticated (drives
+// the AccountStore add path after WKWebView captures a cookie) and
+// `getAvatarHeadshotURL(userId:)` for the per-account avatar in the UI.
 //
 // The auth-ticket CSRF dance:
 //   1. POST /v1/authentication-ticket with Cookie + Referer + Content-Type=application/json.
@@ -44,6 +45,18 @@ public enum RobloxApi {
         public init(ticket: String, capturedAt: Date) {
             self.ticket = ticket
             self.capturedAt = capturedAt
+        }
+    }
+
+    public struct UserProfile: Equatable, Sendable {
+        public let userId: Int64
+        public let username: String
+        public let displayName: String
+
+        public init(userId: Int64, username: String, displayName: String) {
+            self.userId = userId
+            self.username = username
+            self.displayName = displayName
         }
     }
 
@@ -110,7 +123,89 @@ public enum RobloxApi {
         return AuthTicket(ticket: ticket, capturedAt: Date())
     }
 
+    /// Fetch the authenticated-user profile for the given cookie. Used by
+    /// CookieCapture to populate Account fields after a fresh login. Throws
+    /// `.cookieExpired` on 401, `.transient` on 5xx, `.unexpected` otherwise.
+    public static func getUserProfile(cookie: String) async throws -> UserProfile {
+        guard !cookie.isEmpty else {
+            throw APIError.unexpected(status: 0, message: "Cookie must not be empty.")
+        }
+
+        var request = URLRequest(url: URL(string: "https://users.roblox.com/v1/users/authenticated")!)
+        request.httpMethod = "GET"
+        request.setValue(".ROBLOSECURITY=\(cookie)", forHTTPHeaderField: "Cookie")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.unexpected(status: 0, message: "Non-HTTP response from authenticated-user endpoint.")
+        }
+        try mapFatalStatus(http.statusCode)
+        guard (200..<300).contains(http.statusCode) else {
+            throw APIError.unexpected(
+                status: http.statusCode,
+                message: "Roblox authenticated-user endpoint returned \(http.statusCode)."
+            )
+        }
+
+        do {
+            let decoded = try JSONDecoder().decode(UserProfileResponse.self, from: data)
+            return UserProfile(
+                userId: decoded.id,
+                username: decoded.name,
+                displayName: decoded.displayName
+            )
+        } catch {
+            throw APIError.unexpected(
+                status: http.statusCode,
+                message: "Failed to decode authenticated-user response: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    /// Fetch the avatar headshot URL for a user. Soft-fails — returns nil
+    /// when the avatar service has nothing to offer rather than throwing.
+    /// Callers treat the avatar as best-effort UI polish.
+    public static func getAvatarHeadshotURL(userId: Int64) async throws -> URL? {
+        guard userId > 0 else { return nil }
+
+        let urlString =
+            "https://thumbnails.roblox.com/v1/users/avatar-headshot"
+            + "?userIds=\(userId)&size=150x150&format=Png&isCircular=false"
+        var request = URLRequest(url: URL(string: urlString)!)
+        request.httpMethod = "GET"
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode) else {
+            return nil
+        }
+        do {
+            let decoded = try JSONDecoder().decode(AvatarHeadshotResponse.self, from: data)
+            guard let imageUrl = decoded.data.first?.imageUrl, !imageUrl.isEmpty else {
+                return nil
+            }
+            return URL(string: imageUrl)
+        } catch {
+            return nil
+        }
+    }
+
     // MARK: - Internals
+
+    private struct UserProfileResponse: Decodable {
+        let id: Int64
+        let name: String
+        let displayName: String
+    }
+
+    private struct AvatarHeadshotResponse: Decodable {
+        let data: [Item]
+        struct Item: Decodable {
+            let imageUrl: String
+        }
+    }
 
     private static func postAuthTicket(
         cookie: String,
