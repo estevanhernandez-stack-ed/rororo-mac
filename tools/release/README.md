@@ -35,14 +35,20 @@ deferred-bootstrap contract — code lands now, secrets get uploaded later.
 ### 1. Generate the Sparkle EdDSA keypair
 
 After `xcodebuild -resolvePackageDependencies` resolves Sparkle (run it
-once locally), the helper binaries are at
-`~/Library/Developer/Xcode/DerivedData/RORORO-*/SourcePackages/checkouts/Sparkle/bin/`.
+once locally), the helper binaries land in the SPM **artifacts** cache,
+not the checkouts cache. The path is:
+
+```
+~/Library/Developer/Xcode/DerivedData/RORORO-*/SourcePackages/artifacts/sparkle/Sparkle/bin/
+```
+
+(Sparkle 2.9+ moved the modern utilities here; `SourcePackages/checkouts/Sparkle/bin/`
+only carries the legacy DSA scripts now.)
 
 Run `generate_keys`:
 
 ```bash
-cd ~/Library/Developer/Xcode/DerivedData/RORORO-*/SourcePackages/checkouts/Sparkle/bin
-./generate_keys
+"$(find ~/Library/Developer/Xcode/DerivedData/RORORO-* -name generate_keys -type f | head -1)"
 ```
 
 It prints:

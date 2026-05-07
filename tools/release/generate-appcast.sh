@@ -28,9 +28,14 @@ resolve_sign_update() {
     return 0
   fi
   local candidate
-  candidate="$(find "$REPO_ROOT" -path '*Sparkle*/bin/sign_update' -type f 2>/dev/null | head -n 1 || true)"
+  # Sparkle 2.9+ ships sign_update under SourcePackages/artifacts/sparkle/...,
+  # not SourcePackages/checkouts/Sparkle/bin/ (that path only carries the
+  # legacy DSA scripts). The find below catches both layouts but excludes
+  # old_dsa_scripts so we don't accidentally pick up the legacy DSA-only
+  # tool against an EdDSA key.
+  candidate="$(find "$HOME/Library/Developer/Xcode/DerivedData" -name sign_update -type f -not -path '*/old_dsa_scripts/*' 2>/dev/null | head -n 1 || true)"
   if [[ -z "$candidate" ]]; then
-    candidate="$(find "$HOME/Library/Developer/Xcode/DerivedData" -name sign_update -type f 2>/dev/null | head -n 1 || true)"
+    candidate="$(find "$REPO_ROOT" -name sign_update -type f -not -path '*/old_dsa_scripts/*' 2>/dev/null | head -n 1 || true)"
   fi
   if [[ -z "$candidate" ]]; then
     echo "::error::Could not locate Sparkle's sign_update utility. Resolve SPM dependencies first (xcodebuild -resolvePackageDependencies), then re-run." >&2

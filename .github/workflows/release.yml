@@ -54,7 +54,7 @@ jobs:
         run: |
           # SPM caches Sparkle's bin/ under ~/Library/Developer/Xcode/DerivedData
           # after -resolvePackageDependencies. Pin its path for the appcast step.
-          SIGN_UPDATE_PATH="$(find "$HOME/Library/Developer/Xcode/DerivedData" -name sign_update -type f 2>/dev/null | head -n 1 || true)"
+          SIGN_UPDATE_PATH="$(find "$HOME/Library/Developer/Xcode/DerivedData" -name sign_update -type f -not -path "*/old_dsa_scripts/*" 2>/dev/null | head -n 1 || true)"
           if [[ -z "$SIGN_UPDATE_PATH" ]]; then
             echo "::error::sign_update not found in DerivedData. SPM resolution may have failed."
             exit 1
