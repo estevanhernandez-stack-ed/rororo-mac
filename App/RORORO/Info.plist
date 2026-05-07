@@ -72,11 +72,11 @@
 	<key>SUFeedURL</key>
 	<string>https://626labs.github.io/rororo-mac/appcast.xml</string>
 	<key>SUPublicEDKey</key>
-	<string>REPLACE_WITH_GENERATED_PUBLIC_KEY</string>
+	<string>b5hOsbZVS61d3/wAN8hxf70HvfH3SOpuNVZES3QvhpI=</string>
 	<key>SUEnableInstallerLauncherService</key>
 	<true/>
 	<key>SUEnableAutomaticChecks</key>
-	<false/>
+	<true/>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
 </dict>

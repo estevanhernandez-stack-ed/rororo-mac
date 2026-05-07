@@ -36,17 +36,17 @@ final class UpdaterHost {
 
     /// Construct the updater controller exactly once.
     ///
-    /// `startingUpdater` is gated to `false` until the four-step bootstrap
-    /// lands (Sparkle EdDSA keypair + Apple Developer ID cert + notarization
-    /// creds + GitHub Pages enablement — see `tools/release/README.md`).
-    /// While `SUPublicEDKey` is the `REPLACE_WITH_GENERATED_PUBLIC_KEY`
-    /// placeholder and the appcast URL 404s, auto-firing the updater on
-    /// launch surfaces an error dialog whose dismiss path can crash. Flip
-    /// to `true` in the same commit that pastes in the real public key.
+    /// `startingUpdater: true` once bootstrap step 1 has landed (Sparkle
+    /// EdDSA public key in Info.plist + this flip in the same commit). Until
+    /// the rest of the bootstrap chain is complete (Apple Developer ID cert,
+    /// notary creds, GitHub Pages — see `tools/release/README.md`), Sparkle
+    /// will check the appcast URL and either find no items (if no v* tag has
+    /// shipped a release yet) or surface them. Both are safe — the crash
+    /// trap was specifically the placeholder-public-key + 404-appcast combo.
     func bootIfNeeded() {
         guard controller == nil else { return }
         controller = SPUStandardUpdaterController(
-            startingUpdater: false,
+            startingUpdater: true,
             updaterDelegate: nil,
             userDriverDelegate: nil
         )
