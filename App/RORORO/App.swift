@@ -15,15 +15,35 @@ import SwiftUI
 struct ROROROApp: App {
     var body: some Scene {
         WindowGroup("RORORO") {
-            VStack(spacing: 12) {
-                Text("RORORO")
-                    .font(.largeTitle)
-                Text("Mac-native multi-Roblox launcher")
-                    .foregroundStyle(.secondary)
-            }
-            .padding()
-            .frame(minWidth: 720, minHeight: 480)
+            ContentView()
+                .frame(minWidth: 720, minHeight: 480)
+                .onAppear {
+                    // Boot the multi-instance coordinator: claims the
+                    // `roblox-player://` URL scheme, registers the
+                    // willTerminate restore hook, kicks off stale-instance
+                    // cleanup. Idempotent.
+                    MultiInstanceCoordinator.shared.bootIfNeeded()
+                }
+                .onOpenURL { url in
+                    // Routed when the user clicks Play on roblox.com or
+                    // any other app hands us a `roblox-player:` URL.
+                    MultiInstanceCoordinator.shared.handleIncomingURL(url)
+                }
         }
         .windowResizability(.contentSize)
+    }
+}
+
+/// Phase 0/3 placeholder — Phase 5 builds out the real UI (account list,
+/// tray, settings, diagnostics).
+struct ContentView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("RORORO")
+                .font(.largeTitle)
+            Text("Mac-native multi-Roblox launcher")
+                .foregroundStyle(.secondary)
+        }
+        .padding()
     }
 }

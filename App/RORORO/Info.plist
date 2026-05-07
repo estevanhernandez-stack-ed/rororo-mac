@@ -31,10 +31,31 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026 626 Labs LLC. All rights reserved.</string>
 
-	<!-- CFBundleURLTypes for `roblox-player://` lands at Phase 3 (multi-instance
-	     coordinator). Sparkle keys (SUFeedURL / SUPublicEDKey / SUEnable*) land
-	     at Phase 6. CFBundleDocumentTypes is intentionally NEVER added — macRo's
-	     Info.plist comments record the regression (registering doc types broke
-	     window event routing). -->
+	<!-- ============================================================
+	     `roblox-player://` URL scheme registration (Phase 3).
+	     When multi-instance is ON, RORORO claims this scheme via
+	     `URLSchemeHandler.claim()` so that clicking Play on roblox.com
+	     routes the launcher URL through MultiInstanceCoordinator first.
+	     The CFBundleURLTypes entry below makes us eligible to be
+	     selected as the default handler.
+
+	     CFBundleDocumentTypes is intentionally NEVER added — macRo's
+	     Info.plist comments record the regression (registering doc types
+	     broke window event routing). Sparkle keys (SUFeedURL / SUPublicEDKey
+	     / SUEnable*) land at Phase 6.
+	     ============================================================ -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.626labs.rororo-mac.roblox-player</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>roblox-player</string>
+			</array>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+		</dict>
+	</array>
 </dict>
 </plist>
