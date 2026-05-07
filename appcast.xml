@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+     xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"
+     xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <channel>
+        <title>RORORO Updates</title>
+        <link>https://estevanhernandez-stack-ed.github.io/rororo-mac/appcast.xml</link>
+        <description>Latest RORORO updates</description>
+        <language>en</language>
+        <item>
+            <title>v0.1.0</title>
+            <pubDate>Thu, 07 May 2026 19:15:32 +0000</pubDate>
+            <sparkle:version>0.1.0</sparkle:version>
+            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+
+            <enclosure
+                url="https://github.com/estevanhernandez-stack-ed/rororo-mac/releases/download/v0.1.0/RORORO.dmg"
+                length="1446631"
+                type="application/octet-stream"
+                sparkle:edSignature="LlPXIYi14EYt30ZkSHGE7cDpPbD3MpvduyHE+RjqYSf97nM+o6PJ3OQGwZ4j1fi0UEZ3W4pogPe/JneqTU0HBw=="/>
+        </item>
+    </channel>
+</rss>
