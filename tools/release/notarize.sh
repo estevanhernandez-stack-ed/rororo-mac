@@ -73,11 +73,30 @@ echo "==> [3/8] Zip the .app for notarytool submission"
 ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
 
 echo "==> [4/8] Submit to Apple notary service (waits for ticket)"
-xcrun notarytool submit "$ZIP_PATH" \
+SUBMIT_OUTPUT="$(xcrun notarytool submit "$ZIP_PATH" \
   --apple-id "$APPLE_ID" \
   --team-id "$APPLE_TEAM_ID" \
   --password "$APPLE_NOTARY_PASSWORD" \
-  --wait
+  --wait 2>&1)"
+echo "$SUBMIT_OUTPUT"
+
+# notarytool exits 0 even on `status: Invalid` — Apple's "we accepted the
+# submission but rejected the binary". Catch that explicitly + fetch the
+# detailed log so future-us doesn't have to chase the submission id.
+SUBMISSION_ID="$(echo "$SUBMIT_OUTPUT" | sed -nE 's/^[[:space:]]*id:[[:space:]]+([a-f0-9-]+).*/\1/p' | head -n 1)"
+NOTARY_STATUS="$(echo "$SUBMIT_OUTPUT" | sed -nE 's/^[[:space:]]*status:[[:space:]]+(.+)$/\1/p' | tail -n 1)"
+
+if [[ "$NOTARY_STATUS" != "Accepted" ]]; then
+  echo "::error::Notarization status is '$NOTARY_STATUS' (id=$SUBMISSION_ID)."
+  if [[ -n "$SUBMISSION_ID" ]]; then
+    echo "==> Fetching notarization log for diagnostic"
+    xcrun notarytool log "$SUBMISSION_ID" \
+      --apple-id "$APPLE_ID" \
+      --team-id "$APPLE_TEAM_ID" \
+      --password "$APPLE_NOTARY_PASSWORD" || true
+  fi
+  exit 1
+fi
 
 echo "==> [5/8] Staple the notary ticket onto the .app"
 xcrun stapler staple "$APP_PATH"
