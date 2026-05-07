@@ -1,0 +1,64 @@
+RORORO Mac — Provenance
+========================
+
+The macOS multi-instance technique combines two prior public-source
+approaches. RORORO Mac is a clean reimplementation in Swift; no code is
+copied from either reference project.
+
+----------------------------------------------------------------------
+MultiBloxy (Windows mutex hold) — sibling project on Windows
+----------------------------------------------------------------------
+
+Used by RORORO Windows. Documented here for completeness; not shipped
+with the Mac port.
+
+Source repo:   https://github.com/Zgoly/MultiBloxy
+Author:        Zgoly (github.com/Zgoly)
+What it does:  Holds the Windows named mutex `Local\ROBLOX_singletonEvent`
+               before Roblox launches, defeating the singleton check.
+               Lives in the system tray; ~3 MB RAM, 0% CPU at idle. Does
+               NOT inject into the Roblox process — only reserves a mutex
+               name.
+
+----------------------------------------------------------------------
+Insadem multi-roblox-macos (POSIX sem_unlink technique) — direct reference
+----------------------------------------------------------------------
+
+The Mac multi-instance technique. Reimplemented in Swift; no code copied.
+
+Reference impl: https://github.com/Insadem/multi-roblox-macos (Go)
+Mechanism:      sem_unlink("/RobloxPlayerUniq") — destroys the kernel-
+                level reference to the macOS Roblox client's singleton-
+                enforcement semaphore. The next RobloxPlayer process
+                creates a fresh semaphore and starts cleanly. Already-
+                running instances keep working.
+Adjacent steps: cp -a /Applications/Roblox.app → tmp per-instance copy;
+                flip LSMultipleInstancesProhibited:false on the copy's
+                Info.plist; LSSetDefaultHandlerForURLScheme to claim
+                roblox-player://.
+
+Sibling implementations using the same technique:
+  - github.com/iigordev/RobloxMultiInstance
+  - github.com/Avaluate/multi-roblox
+
+All three are unsigned community tools (Go / CLI). RORORO Mac is the
+signed/notarized desktop product expression.
+
+----------------------------------------------------------------------
+What's NOT in this product
+----------------------------------------------------------------------
+
+- No injection into the Roblox process.
+- No modification of the Roblox binary.
+- No anti-detection logic. The semaphore-unlink call is a public POSIX
+  function any process can call — Roblox's own client could call it on
+  shutdown if it chose to.
+- No anti-cheat evasion. We do nothing to hide multi-instance use from
+  Roblox's anti-fraud systems. If a specific game introduces an active
+  anti-macro check, the right answer is to adapt the plugin or stop
+  supporting that game — never pollute the engine.
+
+Roblox / Hyperion has stated multi-instancing "may be considered
+malicious behavior." Risk of a ban appears low because we don't inject
+into or modify the client, but it is non-zero. Don't run this on
+accounts you can't afford to lose.
