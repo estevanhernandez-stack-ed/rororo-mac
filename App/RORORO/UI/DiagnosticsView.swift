@@ -12,6 +12,7 @@ struct DiagnosticsView: View {
 
     private let robloxInstalled = FileManager.default.fileExists(atPath: RobloxAppCopier.robloxAppPath)
     @State private var copiedFlash = false
+    @State private var bundleSavingError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
@@ -23,7 +24,20 @@ struct DiagnosticsView: View {
                 Button(copiedFlash ? "Copied!" : "Copy") { copyAll() }
                     .buttonStyle(.bordered)
                     .tint(Theme.Color.productTeal)
+                    .help("Copy a structured snapshot of state to the clipboard.")
+                Button("Save bundle…") { saveBundle() }
+                    .buttonStyle(.bordered)
+                    .tint(Theme.Color.productTeal)
+                    .help("Save a .zip with logs + (cookie-free) state for bug reports.")
                 Button("Close") { isPresented = false }
+            }
+            .alert("Couldn't save bundle", isPresented: Binding(
+                get: { bundleSavingError != nil },
+                set: { _ in bundleSavingError = nil }
+            )) {
+                Button("OK") { bundleSavingError = nil }
+            } message: {
+                Text(bundleSavingError ?? "")
             }
 
             section("Roblox Install") {
@@ -57,8 +71,13 @@ struct DiagnosticsView: View {
             }
 
             section("Roblox Internals") {
-                row("Singleton semaphore", value: SemaphoreBreaker.robloxSingletonSemaphoreName)
-                Text("If a future Roblox client renames this semaphore, multi-instance launches will silently start failing. Update SemaphoreBreaker.robloxSingletonSemaphoreName.")
+                let store = RobloxCompatStore.shared
+                row("Effective semaphore", value: store.currentSemaphoreName())
+                row("Compat feed", value: store.freshness())
+                if let err = store.lastFetchError {
+                    row("Compat fetch error", value: err, color: Theme.Color.stateWarn)
+                }
+                Text("Semaphore name comes from the remote roblox-compat.json feed (5-min TTL). If the feed is unreachable, the app falls back to its built-in default. Surface this to verify a future Roblox rename has been picked up.")
                     .font(Theme.Font.bodySmall)
                     .foregroundStyle(Theme.Color.fg3)
             }
@@ -90,6 +109,30 @@ struct DiagnosticsView: View {
                 .font(Theme.Font.mono)
                 .foregroundStyle(color)
                 .textSelection(.enabled)
+        }
+    }
+
+    private func saveBundle() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.zip]
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+            .replacingOccurrences(of: ":", with: "-")
+        panel.nameFieldStringValue = "RORORO-diagnostics-\(timestamp).zip"
+        panel.canCreateDirectories = true
+        panel.title = "Save diagnostics bundle"
+        panel.message = "A .zip with logs + non-secret state. Cookies stay in Keychain; private-server codes are redacted."
+
+        panel.begin { result in
+            guard result == .OK, let dest = panel.url else { return }
+            Task.detached(priority: .userInitiated) {
+                do {
+                    try await DiagnosticsBundle.writeBundle(to: dest)
+                } catch {
+                    await MainActor.run {
+                        bundleSavingError = error.localizedDescription
+                    }
+                }
+            }
         }
     }
 

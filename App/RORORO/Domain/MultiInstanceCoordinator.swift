@@ -52,6 +52,13 @@ public final class MultiInstanceCoordinator {
             try? RobloxAppCopier.cleanupStaleInstances()
         }
 
+        // Refresh the remote compat config (semaphore name, known-good
+        // Roblox version, etc). Best-effort — a network failure leaves
+        // us on the cached value or hardcoded fallback.
+        Task { @MainActor in
+            await RobloxCompatStore.shared.refresh()
+        }
+
         // Async claim. Surface failures to the UI; don't crash the app.
         Task { @MainActor in
             do {
@@ -79,8 +86,9 @@ public final class MultiInstanceCoordinator {
     /// `MultiInstanceState.shared.lastError`.
     public func handleIncomingURL(_ url: URL) {
         let enabled = MultiInstanceState.shared.enabled
+        let semaphoreName = RobloxCompatStore.shared.currentSemaphoreName()
         Task.detached(priority: .userInitiated) {
-            await Self.performLaunch(url, enabled: enabled)
+            await Self.performLaunch(url, enabled: enabled, semaphoreName: semaphoreName)
         }
     }
 
@@ -98,7 +106,7 @@ public final class MultiInstanceCoordinator {
 
     // MARK: - Off-main worker (no actor isolation; runs on Task.detached)
 
-    nonisolated private static func performLaunch(_ url: URL, enabled: Bool) async {
+    nonisolated private static func performLaunch(_ url: URL, enabled: Bool, semaphoreName: String) async {
         if !enabled {
             // Multi-instance OFF — open the original Roblox.app with the URL.
             // Without our break, only one Roblox can run; the second click
@@ -131,11 +139,14 @@ public final class MultiInstanceCoordinator {
             //   5. sem_unlink again — race buffer if Roblox-on-launch
             //      recreated the semaphore between our first sem_unlink
             //      and the process spawn.
+            //
+            // `semaphoreName` comes from RobloxCompatStore so a Roblox
+            // rename can be patched without an app release.
             let copy = try RobloxAppCopier.copyAppForInstance()
-            _ = SemaphoreBreaker.breakRobloxSingleton()
+            _ = SemaphoreBreaker.breakRobloxSingleton(name: semaphoreName)
             try await openRoblox(at: copy, with: url)
             try? RobloxAppCopier.setMultipleInstancesProhibitionPostLaunch(at: copy)
-            _ = SemaphoreBreaker.breakRobloxSingleton()
+            _ = SemaphoreBreaker.breakRobloxSingleton(name: semaphoreName)
             await MainActor.run {
                 MultiInstanceState.shared.instanceCount += 1
                 MultiInstanceState.shared.lastError = nil

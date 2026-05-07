@@ -16,8 +16,23 @@ DIST_DIR="$REPO_ROOT/dist"
 APPCAST_PATH="$DIST_DIR/appcast.xml"
 DOWNLOAD_DIR="$REPO_ROOT/build/appcast"
 APPCAST_FEED_URL="https://estevanhernandez-stack-ed.github.io/rororo-mac/appcast.xml"
+COMPAT_SOURCE="$REPO_ROOT/tools/release/roblox-compat.json"
+COMPAT_DEST="$DIST_DIR/roblox-compat.json"
 
 mkdir -p "$DIST_DIR" "$DOWNLOAD_DIR"
+
+# Copy the compat config (semaphore name + known-good Roblox version)
+# to dist/ so it gets published to gh-pages alongside the appcast. The
+# in-app RobloxCompatStore fetches this URL at boot — lets us patch
+# semaphore-name renames within minutes without cutting an app release.
+# For OUT-OF-BAND updates (no new tag), git-push the updated file
+# directly to the gh-pages branch.
+if [[ -f "$COMPAT_SOURCE" ]]; then
+  cp "$COMPAT_SOURCE" "$COMPAT_DEST"
+  echo "Copied roblox-compat.json into dist/"
+else
+  echo "::warning::roblox-compat.json source missing at $COMPAT_SOURCE; gh-pages will not include it this run."
+fi
 
 # ---------------------------------------------------------------------------
 # Resolve sign_update binary.

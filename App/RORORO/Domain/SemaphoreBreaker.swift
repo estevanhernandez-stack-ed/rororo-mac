@@ -51,9 +51,14 @@ public enum SemaphoreBreaker {
 
     /// Unlink the canonical Roblox singleton semaphore. Returns the
     /// outcome; never throws. Run before each RobloxPlayer spawn.
+    ///
+    /// `name` defaults to the hardcoded
+    /// `robloxSingletonSemaphoreName`. MultiInstanceCoordinator passes
+    /// the live value from `RobloxCompatStore` (remote-overridable) so
+    /// a Roblox-side rename can be patched without an app release.
     @discardableResult
-    public static func breakRobloxSingleton() -> Outcome {
-        return unlink(name: robloxSingletonSemaphoreName)
+    public static func breakRobloxSingleton(name: String = robloxSingletonSemaphoreName) -> Outcome {
+        return unlink(name: name)
     }
 
     /// Unlink an arbitrary POSIX semaphore name. Public for tests and
