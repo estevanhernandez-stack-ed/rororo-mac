@@ -31,17 +31,15 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026 626 Labs LLC. All rights reserved.</string>
 
-	<!-- Single-instance enforcement on RORORO itself. Without this,
-	     the OS will spawn a second RORORO when a `roblox-player://`
-	     URL is clicked while RORORO is already running — the new
-	     instance handles the URL and the old one keeps its tray.
-	     With it, the URL routes to the existing instance via
-	     .onOpenURL (caught at v0.2 manual smoke 2026-05-07: user
-	     saw "another rororo" appear when clicking Play in a browser).
-	     This does NOT affect the per-instance Roblox copies — those
-	     are different .app bundles via RobloxAppCopier. -->
-	<key>LSMultipleInstancesProhibited</key>
-	<true/>
+	<!-- LSMultipleInstancesProhibited is set by build settings (Release
+	     only — see project.yml). At Debug we leave it unset because
+	     XCTest's host-app launcher needs to be able to spawn the app
+	     with a test bundle injected, which LSMultipleInstancesProhibited=true
+	     would block ("Could not launch 'ROROROTests'" — caught at
+	     v0.2 build 2026-05-07). Production users always get Release
+	     builds via the notarized DMG, so they get single-instance
+	     enforcement; developers running Debug get test compatibility. -->
+
 
 	<!-- ============================================================
 	     `roblox-player://` URL scheme registration (Phase 3).

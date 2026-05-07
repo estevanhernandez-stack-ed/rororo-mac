@@ -50,6 +50,12 @@ settings:
       ENABLE_HARDENED_RUNTIME: NO
     Release:
       ONLY_ACTIVE_ARCH: NO
+      # Single-instance enforcement on RORORO itself. xcodebuild injects
+      # this into Info.plist at build time via the INFOPLIST_KEY_ prefix.
+      # Release-only because XCTest can't launch the host app with the
+      # test bundle injected when LSMultipleInstancesProhibited is true
+      # (caught at v0.2 manual smoke 2026-05-07).
+      INFOPLIST_KEY_LSMultipleInstancesProhibited: YES
 
 targets:
   RORORO:

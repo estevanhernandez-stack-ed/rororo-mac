@@ -296,18 +296,38 @@ private struct FavoriteRow: View {
                     .foregroundStyle(Theme.Color.fg3)
             }
             Spacer()
+            // Visible Rename button — discoverable surface for the action
+            // users can't intuit from a `⋯` menu alone (caught at v0.2
+            // smoke 2026-05-07).
+            Button(action: onRename) {
+                Image(systemName: "pencil")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.Color.fg2)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .help("Rename")
+
             Menu {
-                Button("Rename…", action: onRename)
                 if !game.isDefault {
                     Button("Set as default", action: onSetDefault)
                 }
                 Divider()
                 Button("Remove", role: .destructive, action: onRemove)
             } label: {
+                // contentShape(Rectangle()) on the explicit frame fixes
+                // the v0.1.x "haunted ⋯" — without it, only the glyph
+                // pixels were hit-testable and clicks frequently missed.
                 Image(systemName: "ellipsis")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.Color.fg2)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
             }
+            .menuIndicator(.hidden)
             .menuStyle(.borderlessButton)
-            .frame(width: 24)
+            .fixedSize()
         }
         .padding(.vertical, Theme.Spacing.xs)
     }
@@ -355,15 +375,28 @@ private struct PrivateServerRow: View {
                     .foregroundStyle(Theme.Color.fg3)
             }
             Spacer()
+            Button(action: onRename) {
+                Image(systemName: "pencil")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.Color.fg2)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .help("Rename")
+
             Menu {
-                Button("Rename…", action: onRename)
-                Divider()
                 Button("Remove", role: .destructive, action: onRemove)
             } label: {
                 Image(systemName: "ellipsis")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.Color.fg2)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
             }
+            .menuIndicator(.hidden)
             .menuStyle(.borderlessButton)
-            .frame(width: 24)
+            .fixedSize()
         }
         .padding(.vertical, Theme.Spacing.xs)
     }

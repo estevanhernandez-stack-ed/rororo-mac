@@ -157,7 +157,12 @@ struct AccountsListView: View {
             AccountRow(
                 account: account,
                 isLaunching: inFlightLaunchUserId == account.userId,
+                favorites: favoriteStore.favorites,
+                servers: PrivateServerStore.shared.servers,
                 onLaunchPrimary: { launchPrimary(account: account) },
+                onLaunchTarget: { target, savedServerId in
+                    launch(account: account, target: target, savedServerId: savedServerId)
+                },
                 onLaunchCustom: { pendingPickerForAccount = account },
                 onRemove: { remove(account: account) }
             )
@@ -245,7 +250,10 @@ struct AccountsListView: View {
 private struct AccountRow: View {
     let account: Account
     let isLaunching: Bool
+    let favorites: [FavoriteGame]
+    let servers: [SavedPrivateServer]
     let onLaunchPrimary: () -> Void
+    let onLaunchTarget: (LaunchTarget, _ savedServerId: UUID?) -> Void
     let onLaunchCustom: () -> Void
     let onRemove: () -> Void
 
@@ -269,23 +277,65 @@ private struct AccountRow: View {
             if isLaunching {
                 ProgressView().controlSize(.small)
             } else {
-                HStack(spacing: Theme.Spacing.xs) {
-                    Button("Launch As", action: onLaunchPrimary)
-                        .buttonStyle(.borderedProminent)
-                        .tint(Theme.Color.productTeal)
-                    Menu {
-                        Button("Pick game / server…", action: onLaunchCustom)
-                        Divider()
-                        Button("Remove account", role: .destructive, action: onRemove)
-                    } label: {
-                        Image(systemName: "ellipsis")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .frame(width: 24)
-                }
+                splitLaunchButton
             }
         }
         .padding(.vertical, Theme.Spacing.xs)
+    }
+
+    /// Split-button: primary "Launch As" → default game one-click;
+    /// chevron dropdown → favorites + saved servers + custom + remove.
+    /// Replaces the v0.2.0 separate Launch As + ⋯ pair.
+    private var splitLaunchButton: some View {
+        HStack(spacing: 0) {
+            Button("Launch As", action: onLaunchPrimary)
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.Color.productTeal)
+
+            Menu {
+                if !favorites.isEmpty {
+                    Section("Favorite games") {
+                        ForEach(favorites) { game in
+                            Button(game.isDefault ? "\(game.name)  (default)" : game.name) {
+                                onLaunchTarget(.place(placeId: game.placeId), nil)
+                            }
+                        }
+                    }
+                }
+                if !servers.isEmpty {
+                    Section("Saved private servers") {
+                        ForEach(servers) { server in
+                            Button(server.name) {
+                                onLaunchTarget(
+                                    .privateServer(
+                                        placeId: server.placeId,
+                                        code: server.code,
+                                        kind: server.codeKind
+                                    ),
+                                    server.id
+                                )
+                            }
+                        }
+                    }
+                }
+                if !favorites.isEmpty || !servers.isEmpty {
+                    Divider()
+                }
+                Button("Pick game / server…", action: onLaunchCustom)
+                Divider()
+                Button("Remove account", role: .destructive, action: onRemove)
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .menuIndicator(.hidden)
+            .menuStyle(.borderlessButton)
+            .background(Theme.Color.productTeal.opacity(0.85), in: RoundedRectangle(cornerRadius: 5))
+            .padding(.leading, 1)
+        }
     }
 
     @ViewBuilder
