@@ -47,14 +47,25 @@ if [[ ! -d "$ARCHIVE_PATH" ]]; then
   exit 1
 fi
 
-echo "==> [2/8] Export archive (developer-id distribution)"
-xcodebuild -exportArchive \
-  -archivePath "$ARCHIVE_PATH" \
-  -exportPath "$EXPORT_DIR" \
-  -exportOptionsPlist "$EXPORT_OPTIONS"
+echo "==> [2/8] Extract .app from archive"
+# We bypass `xcodebuild -exportArchive` here. exportArchive has a long
+# history of failing with "No signing certificate 'Developer ID Application'
+# found" in CI environments where the archive step succeeded — the two
+# code paths resolve signing identities differently and exportArchive's
+# search-list handling is finicky across step boundaries. The archive
+# step already signed the .app with the Developer ID cert + Hardened
+# Runtime (required for notarization), so the .xcarchive's
+# Products/Applications/RORORO.app is essentially what exportArchive
+# would have produced for `developer-id` distribution.
+#
+# Verified by `codesign --verify` below — if the archive's signature
+# isn't intact, this fails fast before notarization gets the work.
+mkdir -p "$EXPORT_DIR"
+cp -R "$ARCHIVE_PATH/Products/Applications/RORORO.app" "$APP_PATH"
+codesign --verify --verbose=4 "$APP_PATH"
 
 if [[ ! -d "$APP_PATH" ]]; then
-  echo "::error::Export failed — $APP_PATH not found."
+  echo "::error::App copy failed — $APP_PATH not found."
   exit 1
 fi
 
