@@ -8,6 +8,15 @@ import SwiftUI
 struct AboutView: View {
     @Binding var isPresented: Bool
 
+    // Easter egg ported from RORORO Windows: tap the version number 6 or
+    // 7 times (chosen randomly per sheet open so you can't know the exact
+    // count) to reveal the Koii 4 eva tag. Resets when the sheet closes
+    // and re-opens.
+    @State private var versionTapCount = 0
+    @State private var koiiThreshold = Int.random(in: 6...7)
+    @State private var koiiRevealed = false
+    @State private var koiiPulse: CGFloat = 1.0
+
     private var version: String {
         let bundle = Bundle.main
         let short = bundle.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
@@ -28,6 +37,15 @@ struct AboutView: View {
             Text(version)
                 .font(Theme.Font.mono)
                 .foregroundStyle(Theme.Color.fg3)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    handleVersionTap()
+                }
+
+            if koiiRevealed {
+                koiiTag
+                    .transition(.scale(scale: 0.5).combined(with: .opacity))
+            }
 
             VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
                 Text("What's new in v0.2".uppercased())
@@ -65,5 +83,62 @@ struct AboutView: View {
         .padding(Theme.Spacing.lg)
         .frame(width: 420, height: 420)
         .background(Theme.Color.bgPage)
+        .onDisappear {
+            // Reset so the next opening starts fresh — and re-rolls the
+            // 6-or-7 threshold so you can't memorize it.
+            versionTapCount = 0
+            koiiRevealed = false
+            koiiThreshold = Int.random(in: 6...7)
+            koiiPulse = 1.0
+        }
+    }
+
+    private func handleVersionTap() {
+        guard !koiiRevealed else { return }
+        versionTapCount += 1
+        if versionTapCount >= koiiThreshold {
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.55)) {
+                koiiRevealed = true
+            }
+            // Gentle pulse forever after reveal.
+            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) {
+                koiiPulse = 1.06
+            }
+        }
+    }
+
+    /// Brand-gradient text on a brand-gradient capsule outline with a
+    /// dual cyan + magenta glow. Pulses gently after reveal. Faithful
+    /// port of the RORORO Windows easter egg with macOS-shaped polish.
+    private var koiiTag: some View {
+        Text("Koii 4 eva 💖")
+            .font(Theme.Font.heading2)
+            .foregroundStyle(
+                LinearGradient(
+                    colors: [
+                        Theme.Color.brandCyan,
+                        Theme.Color.brandMagenta,
+                        Theme.Color.brandCyan,
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .padding(.horizontal, 18)
+            .padding(.vertical, 6)
+            .overlay(
+                Capsule()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [Theme.Color.brandCyan, Theme.Color.brandMagenta],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        ),
+                        lineWidth: 2
+                    )
+            )
+            .shadow(color: Theme.Color.brandMagenta.opacity(0.55), radius: 12)
+            .shadow(color: Theme.Color.brandCyan.opacity(0.55), radius: 8)
+            .scaleEffect(koiiPulse)
     }
 }
