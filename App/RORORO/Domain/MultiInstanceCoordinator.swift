@@ -37,11 +37,36 @@ public final class MultiInstanceCoordinator {
 
     private var didBoot = false
 
+    /// Internal launch-queue plumbing. EVERY incoming URL goes through
+    /// the AsyncStream worker so that the 600MB Roblox.app copy step
+    /// (RobloxAppCopier.copyAppForInstance) doesn't run concurrently
+    /// across multiple launches. Two simultaneous copies thrash disk
+    /// I/O; the user's manual workaround was waiting one-at-a-time.
+    /// The queue makes that workaround automatic — and it's also the
+    /// foundation for "Launch group" (Slope B1), which enqueues N
+    /// requests and lets the worker process them serially.
+    ///
+    /// Buffer between launches: after each `performLaunch` returns,
+    /// the worker waits for a NEW Roblox process to appear in
+    /// `NSWorkspace.runningApplications` (or 3s grace, whichever
+    /// first), then a small post-detection grace so the new engine
+    /// has a moment to read GlobalBasicSettings_<N>.xml before the
+    /// next launch can overwrite it (relevant for per-account
+    /// framerate divergence per ADR 0002).
+    private struct LaunchRequest: Sendable {
+        let url: URL
+        let enabled: Bool
+        let semaphoreName: String
+    }
+    private var launchContinuation: AsyncStream<LaunchRequest>.Continuation?
+    private var launchWorkerTask: Task<Void, Never>?
+
     /// One-time bootstrap. Run from `.onAppear` on the root view. Safe to
     /// call multiple times — second call is a no-op. Performs:
     ///   - Stale-instance cleanup (off-main).
     ///   - URL scheme claim (async).
     ///   - willTerminate observer registration (for restore-on-quit).
+    ///   - Serial launch worker boot (drains the launch queue).
     public func bootIfNeeded() {
         guard !didBoot else { return }
         didBoot = true
@@ -50,6 +75,29 @@ public final class MultiInstanceCoordinator {
         // user has stale .app copies until next boot — non-fatal.
         Task.detached(priority: .background) {
             try? RobloxAppCopier.cleanupStaleInstances()
+        }
+
+        // Boot the serial launch worker. Single consumer over an
+        // AsyncStream — every handleIncomingURL yields a request; the
+        // worker processes one at a time and waits for the spawned
+        // Roblox to actually finish launching (window drawn, app
+        // settled) before draining the next request. Just "process
+        // appeared in runningApplications" isn't enough — caught at
+        // smoke 2026-05-08 where the first rapid-fire launch's window
+        // appeared then closed because the next launch's work hit
+        // mid-startup.
+        let (stream, continuation) = AsyncStream<LaunchRequest>.makeStream(bufferingPolicy: .unbounded)
+        self.launchContinuation = continuation
+        self.launchWorkerTask = Task.detached(priority: .userInitiated) {
+            for await request in stream {
+                let baseline = Self.runningRobloxPIDs()
+                await Self.performLaunch(
+                    request.url,
+                    enabled: request.enabled,
+                    semaphoreName: request.semaphoreName
+                )
+                await Self.waitForLaunchToSettle(baseline: baseline)
+            }
         }
 
         // Refresh the remote compat config (semaphore name, known-good
@@ -97,12 +145,27 @@ public final class MultiInstanceCoordinator {
 
     /// Route an incoming `roblox-player:` URL through the multi-instance
     /// recipe. Called from `.onOpenURL`. Non-throwing — errors land on
-    /// `MultiInstanceState.shared.lastError`.
+    /// `MultiInstanceState.shared.lastError`. Yields the request to the
+    /// serial launch worker so simultaneous calls don't race the 600MB
+    /// app-copy step.
     public func handleIncomingURL(_ url: URL) {
         let enabled = MultiInstanceState.shared.enabled
         let semaphoreName = RobloxCompatStore.shared.currentSemaphoreName()
-        Task.detached(priority: .userInitiated) {
-            await Self.performLaunch(url, enabled: enabled, semaphoreName: semaphoreName)
+        let request = LaunchRequest(
+            url: url,
+            enabled: enabled,
+            semaphoreName: semaphoreName
+        )
+        if let launchContinuation {
+            launchContinuation.yield(request)
+        } else {
+            // bootIfNeeded hasn't run yet — fall back to the pre-queue
+            // direct dispatch so we never silently drop a launch. Should
+            // never happen in production (.onAppear runs bootIfNeeded
+            // before any URL routing) but keeps the interface honest.
+            Task.detached(priority: .userInitiated) {
+                await Self.performLaunch(url, enabled: enabled, semaphoreName: semaphoreName)
+            }
         }
     }
 
@@ -141,6 +204,78 @@ public final class MultiInstanceCoordinator {
     nonisolated private static func anyRobloxRunning() -> Bool {
         NSWorkspace.shared.runningApplications
             .contains { $0.bundleIdentifier?.hasPrefix("com.roblox") == true }
+    }
+
+    /// PIDs of currently-running Roblox instances. Used as the baseline
+    /// before a launch so the queue's settle-wait can identify the NEW
+    /// process (rather than just counting). Each spawned Roblox process
+    /// registers as its own NSRunningApplication entry (PID-scoped),
+    /// so PIDs are unique per instance.
+    nonisolated private static func runningRobloxPIDs() -> Set<pid_t> {
+        Set(NSWorkspace.shared.runningApplications
+            .lazy
+            .filter { $0.bundleIdentifier?.hasPrefix("com.roblox") == true }
+            .map { $0.processIdentifier })
+    }
+
+    /// After a launch fires, wait for the spawned Roblox to fully
+    /// settle before letting the next queued launch start its 600 MB
+    /// copy + spawn. "Settled" means the NSRunningApplication for the
+    /// new PID has `isFinishedLaunching == true` (NSApplicationDidFinish-
+    /// LaunchingNotification has fired), which is roughly when the
+    /// first window is responsive. Just "process registered" isn't
+    /// enough — at smoke 2026-05-08 the first rapid-fire launch's
+    /// window appeared then closed because the second launch's work
+    /// (sem_unlink + Info.plist mod + 600 MB copy disk thrash) hit
+    /// while the engine was still in its vulnerable boot window.
+    ///
+    /// Three timeouts to bound the wait:
+    ///   - `timeoutToAppear`: how long to wait for the new PID to register
+    ///   - `timeoutToFinishLaunching`: how long to wait for the new
+    ///      app's `isFinishedLaunching` flag (some apps never set it;
+    ///      Roblox does, but be defensive)
+    ///   - `postGrace`: a final settle window so the next launch's
+    ///      disk-heavy work doesn't immediately hit the just-launched
+    ///      engine
+    /// On any timeout, return — either the launch actually failed
+    /// (stalling forever helps no one) or the user's machine is just
+    /// slower than expected.
+    nonisolated private static func waitForLaunchToSettle(
+        baseline: Set<pid_t>,
+        timeoutToAppear: TimeInterval = 8.0,
+        timeoutToFinishLaunching: TimeInterval = 20.0,
+        postGrace: TimeInterval = 2.0
+    ) async {
+        // Phase 1: wait for the new PID to appear in runningApplications.
+        let appearDeadline = Date().addingTimeInterval(timeoutToAppear)
+        var spawned: NSRunningApplication? = nil
+        while Date() < appearDeadline {
+            let newApp = NSWorkspace.shared.runningApplications
+                .lazy
+                .filter { $0.bundleIdentifier?.hasPrefix("com.roblox") == true }
+                .first { !baseline.contains($0.processIdentifier) }
+            if let newApp {
+                spawned = newApp
+                break
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+        }
+        guard let spawned else { return }
+
+        // Phase 2: wait for isFinishedLaunching (engine has drawn its
+        // first window + posted the Cocoa launch-finished notification).
+        let finishDeadline = Date().addingTimeInterval(timeoutToFinishLaunching)
+        while Date() < finishDeadline,
+              !spawned.isFinishedLaunching,
+              !spawned.isTerminated {
+            try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
+        }
+
+        // Phase 3: post-grace. Lets the engine run its first second
+        // of "I'm alive" work (network handshake, asset preloading,
+        // semaphore-recreation defenses) before the next queued
+        // launch's sem_unlink + spawn lands.
+        try? await Task.sleep(nanoseconds: UInt64(postGrace * 1_000_000_000))
     }
 
     // MARK: - Off-main worker (no actor isolation; runs on Task.detached)
