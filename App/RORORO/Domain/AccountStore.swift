@@ -95,6 +95,15 @@ public final class AccountStore {
         save()
     }
 
+    /// Set or clear the per-account frame-rate cap override. Pass `nil` to
+    /// revert the account to the global `LaunchSettingsStore` cap. No-op
+    /// when `userId` doesn't match a saved account.
+    public func setFramerateCapOverride(userId: String, cap: Int?) {
+        guard let idx = accounts.firstIndex(where: { $0.userId == userId }) else { return }
+        accounts[idx].framerateCapOverride = cap
+        save()
+    }
+
     // MARK: - Persistence
 
     private func load() {

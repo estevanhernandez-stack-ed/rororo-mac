@@ -21,6 +21,15 @@ public struct Account: Codable, Equatable, Identifiable, Sendable {
     public var displayName: String
     public var avatarThumbnailURL: URL?
     public var lastLaunchedAt: Date?
+    /// Per-account frame-rate cap override (Slope A3). nil → fall back to
+    /// `LaunchSettingsStore.shared.framerateCap` (the global setting); a
+    /// concrete value wins regardless of the global. Race caveat: if the
+    /// user rapid-fires Launch As across two accounts with different
+    /// overrides within the same engine-startup window, the second
+    /// XML write may land before the first Roblox has read it — the
+    /// observed cap collapses to the last-written value. Sequential
+    /// clicks (the normal flow) work cleanly.
+    public var framerateCapOverride: Int?
 
     public var id: String { userId }
 
@@ -29,12 +38,14 @@ public struct Account: Codable, Equatable, Identifiable, Sendable {
         username: String,
         displayName: String,
         avatarThumbnailURL: URL? = nil,
-        lastLaunchedAt: Date? = nil
+        lastLaunchedAt: Date? = nil,
+        framerateCapOverride: Int? = nil
     ) {
         self.userId = userId
         self.username = username
         self.displayName = displayName
         self.avatarThumbnailURL = avatarThumbnailURL
         self.lastLaunchedAt = lastLaunchedAt
+        self.framerateCapOverride = framerateCapOverride
     }
 }

@@ -157,4 +157,87 @@ final class AccountStoreTests: XCTestCase {
         XCTAssertEqual(second.accounts.first?.userId, "12345")
         XCTAssertEqual(try second.cookie(for: "12345"), "secret")
     }
+
+    // MARK: - setFramerateCapOverride
+
+    func testSetFramerateCapOverride_PersistsValueAndSurvivesReload() throws {
+        let first = makeStore()
+        try first.add(
+            account: Account(userId: "12345", username: "tester", displayName: "Tester"),
+            cookie: "secret"
+        )
+
+        first.setFramerateCapOverride(userId: "12345", cap: 30)
+
+        XCTAssertEqual(first.accounts.first?.framerateCapOverride, 30)
+
+        // Roundtrip via JSON to confirm Codable persistence.
+        let reloaded = AccountStore(storeURL: tempStoreURL)
+        XCTAssertEqual(reloaded.accounts.first?.framerateCapOverride, 30)
+    }
+
+    func testSetFramerateCapOverride_NilClearsBackToGlobal() throws {
+        let store = makeStore()
+        try store.add(
+            account: Account(
+                userId: "12345",
+                username: "tester",
+                displayName: "Tester",
+                framerateCapOverride: 60
+            ),
+            cookie: "secret"
+        )
+        XCTAssertEqual(store.accounts.first?.framerateCapOverride, 60)
+
+        store.setFramerateCapOverride(userId: "12345", cap: nil)
+
+        XCTAssertNil(store.accounts.first?.framerateCapOverride)
+    }
+
+    func testSetFramerateCapOverride_OnUnknownUser_DoesNotCrash() {
+        let store = makeStore()
+        store.setFramerateCapOverride(userId: "nope", cap: 20)
+        XCTAssertTrue(store.accounts.isEmpty)
+    }
+
+    // MARK: - Account Codable backward compatibility
+
+    func testAccount_DecodesFromLegacyJsonWithoutFramerateField() throws {
+        // accounts.json files written before the Slope A3 work do not
+        // carry framerateCapOverride. Optional Codable field handling
+        // should treat the missing key as nil, NOT throw.
+        let legacyJson = """
+        [
+          {
+            "userId": "12345",
+            "username": "tester",
+            "displayName": "Tester"
+          }
+        ]
+        """.data(using: .utf8)!
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode([Account].self, from: legacyJson)
+
+        XCTAssertEqual(decoded.count, 1)
+        XCTAssertEqual(decoded.first?.userId, "12345")
+        XCTAssertNil(decoded.first?.framerateCapOverride)
+    }
+
+    func testAccount_RoundTripsFramerateOverrideThroughCodable() throws {
+        let original = Account(
+            userId: "1",
+            username: "alice",
+            displayName: "Alice",
+            framerateCapOverride: 144
+        )
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(original)
+        let decoded = try JSONDecoder().decode(Account.self, from: data)
+
+        XCTAssertEqual(decoded, original)
+        XCTAssertEqual(decoded.framerateCapOverride, 144)
+    }
 }

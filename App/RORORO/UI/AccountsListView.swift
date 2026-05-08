@@ -197,6 +197,9 @@ struct AccountsListView: View {
                     )
                 },
                 onLaunchCustom: { pendingPickerForAccount = account },
+                onSetFramerateCap: { cap in
+                    accountStore.setFramerateCapOverride(userId: account.userId, cap: cap)
+                },
                 onRemove: { remove(account: account) }
             )
         }
@@ -290,7 +293,12 @@ private struct AccountRow: View {
     let onPickFavorite: (FavoriteGame) -> Void
     let onPickServer: (SavedPrivateServer) -> Void
     let onLaunchCustom: () -> Void
+    let onSetFramerateCap: (Int?) -> Void
     let onRemove: () -> Void
+
+    /// Frame-rate cap options surfaced in the per-account menu. nil =
+    /// "Use global" (fall back to LaunchSettingsStore.shared.framerateCap).
+    private static let framerateCapOptions: [Int] = [20, 30, 60, 144]
 
     var body: some View {
         HStack(spacing: Theme.Spacing.md) {
@@ -366,6 +374,21 @@ private struct AccountRow: View {
                     Divider()
                 }
                 Button("Pick game / server…", action: onLaunchCustom)
+                Divider()
+                Section("Frame rate cap (this account)") {
+                    Button(account.framerateCapOverride == nil
+                           ? "✓ Use global"
+                           : "Use global") {
+                        onSetFramerateCap(nil)
+                    }
+                    ForEach(Self.framerateCapOptions, id: \.self) { value in
+                        Button(account.framerateCapOverride == value
+                               ? "✓ \(value) fps"
+                               : "\(value) fps") {
+                            onSetFramerateCap(value)
+                        }
+                    }
+                }
                 Divider()
                 Button("Remove account", role: .destructive, action: onRemove)
             } label: {

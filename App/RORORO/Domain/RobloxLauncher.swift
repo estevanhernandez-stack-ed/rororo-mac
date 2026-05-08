@@ -86,16 +86,14 @@ public final class RobloxLauncher {
         //   - GlobalBasicSettings_<N>.xml (~/Library/Roblox/...) for FramerateCap
         //   - ClientAppSettings.json (inside Roblox.app bundle) for FFlags
         // Both are best-effort: the launch must not abort if either writer
-        // fails. Roblox auto-recreates GlobalBasicSettings on first run and
-        // ignores a missing ClientAppSettings.json, so a no-op fallback is
-        // safe. Cleanup of ClientAppSettings on Roblox process exit is a
-        // follow-up — for now the next launch's atomic overwrite handles
-        // staleness; uninstalling RORORO leaves the last-written FFlags in
-        // place until the user resets via the app or hand-edits.
+        // fails. Per-account framerate override (Slope A3) wins over the
+        // global LaunchSettingsStore cap when set; nil-override falls
+        // back to the global. Cleanup of ClientAppSettings on Roblox
+        // process exit is wired in MultiInstanceCoordinator.
         let snapshot = await MainActor.run {
             LaunchSettingsStore.shared.snapshot()
         }
-        Self.applyLaunchSettings(snapshot: snapshot)
+        Self.applyLaunchSettings(snapshot: snapshot, account: account)
 
         // (5) Hand to coordinator on main.
         guard let url = URL(string: uri) else {
@@ -112,10 +110,16 @@ public final class RobloxLauncher {
     /// (Roblox not installed yet, file permissions wonky, etc.). Public
     /// for unit testing the dispatch logic; production callers go through
     /// `launch(account:target:)`.
-    public static func applyLaunchSettings(snapshot: LaunchSettingsStore.Snapshot) {
-        if let cap = snapshot.framerateCap {
+    ///
+    /// Effective frame-rate cap = `account.framerateCapOverride ??
+    /// snapshot.framerateCap`. Per-account override wins when set;
+    /// otherwise falls back to the global `LaunchSettingsStore` cap;
+    /// nil at both levels means no XML write.
+    public static func applyLaunchSettings(snapshot: LaunchSettingsStore.Snapshot, account: Account) {
+        let effectiveCap = account.framerateCapOverride ?? snapshot.framerateCap
+        if let effectiveCap {
             do {
-                try GlobalSettingsWriter.setFramerateCap(cap)
+                try GlobalSettingsWriter.setFramerateCap(effectiveCap)
             } catch {
                 NSLog("[RORORO] GlobalSettingsWriter failed: \(error)")
             }
