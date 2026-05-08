@@ -127,12 +127,14 @@ echo "==> [6/8] Build a branded DMG from the stapled .app"
 # drop-link at right. dmg-background@2x.png sits next to dmg-background.png
 # so create-dmg picks the retina variant on @2x displays.
 #
-# Background is 660×420 with the original 540×380 brand canvas centered
-# inside a navy (#091023) fill — Finder occasionally restores a wider
-# window from a cached .DS_Store, so the navy padding ensures the layout
-# still reads as intentional even if the visible window doesn't exactly
-# match --window-size. Icons positioned relative to the centered content:
-# app icon at (200, 200), drop link at (460, 200).
+# Background is 900×550 with the original 540×380 brand canvas centered
+# inside a navy (#091023) fill. v0.2.1 used 660×420 — still didn't cover
+# the actual mounted Finder window (Finder honored --window-size for
+# `vibe.itboxName` cache or larger). The 900×550 canvas tolerates any
+# reasonable Finder window override and reads as intentional brand
+# surface (navy fills the gap). Icons positioned to overlay the centered
+# brand content: app at (320, 265), drop link at (580, 265). Original
+# 540×380 brand content sits at canvas offset (180, 85) → (720, 465).
 #
 # create-dmg refuses to overwrite an existing DMG; clear it first.
 rm -f "$DMG_PATH"
@@ -140,10 +142,10 @@ create-dmg \
   --volname "RORORO" \
   --background "$REPO_ROOT/tools/release/dmg-background.png" \
   --window-pos 200 120 \
-  --window-size 660 420 \
+  --window-size 900 550 \
   --icon-size 96 \
-  --icon "RORORO.app" 200 200 \
-  --app-drop-link 460 200 \
+  --icon "RORORO.app" 320 265 \
+  --app-drop-link 580 265 \
   --hide-extension "RORORO.app" \
   --no-internet-enable \
   "$DMG_PATH" \
