@@ -18,9 +18,20 @@ Sibling to [ROROROblox](https://github.com/estevanhernandez-stack-ed/ROROROblox)
 
 ## Install
 
-> **Status:** v0.1.0 not yet shipped. Bootstrap (Sparkle EdDSA keypair, Apple Developer ID cert, notarization creds, GitHub Pages enablement) is the gate before tagging. See [`tools/release/README.md`](tools/release/README.md).
+### Homebrew (recommended)
 
-Once shipped: download the latest `RORORO.dmg` from [Releases](https://github.com/estevanhernandez-stack-ed/rororo-mac/releases), open it, drag `RORORO.app` to `/Applications`, launch. Notarized + signed by Apple — no Gatekeeper prompts. Auto-updates via Sparkle on next launch.
+```sh
+brew tap estevanhernandez-stack-ed/rororo
+brew install --cask rororo
+```
+
+That installs RORORO to `/Applications`. Sparkle handles in-app auto-updates from there — no need to `brew upgrade` for new versions.
+
+### Direct DMG
+
+Download the latest `RORORO.dmg` from the [Releases page](https://github.com/estevanhernandez-stack-ed/rororo-mac/releases/latest), open it, drag `RORORO.app` to `/Applications`, launch. Notarized + signed by Apple — no Gatekeeper warnings. Auto-updates via Sparkle thereafter.
+
+Requires macOS 14 (Sonoma) or later.
 
 ## What it does
 
