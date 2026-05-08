@@ -28,11 +28,17 @@ public struct CGEventKeyEventPoster: KeyEventPoster {
     }
 
     public func post(keyCode: CGKeyCode) async {
+        // Tag both the down and up event with the cycler's source tag so
+        // the safety monitor can ignore them — otherwise the engagement
+        // detector would pause the cycler on every keystroke it fires
+        // (ADR 0004 Decision 9).
         if let down = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true) {
+            down.setIntegerValueField(.eventSourceUserData, value: AutoKeysCyclerSourceTag)
             down.post(tap: .cghidEventTap)
         }
         try? await Task.sleep(nanoseconds: UInt64(pressDuration * 1_000_000_000))
         if let up = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) {
+            up.setIntegerValueField(.eventSourceUserData, value: AutoKeysCyclerSourceTag)
             up.post(tap: .cghidEventTap)
         }
     }

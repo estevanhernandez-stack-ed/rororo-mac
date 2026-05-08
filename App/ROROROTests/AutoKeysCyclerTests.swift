@@ -94,13 +94,15 @@ final class AutoKeysCyclerTests: XCTestCase {
         poster: KeyEventPoster = FakeKeyEventPoster(),
         focuser: WindowFocuser = FakeWindowFocuser(),
         assertion: PowerAssertion = FakePowerAssertion(),
-        sleeper: Sleeper = RecordingSleeper()
+        sleeper: Sleeper = RecordingSleeper(),
+        safety: AutoKeysSafetyMonitor? = nil
     ) -> AutoKeysCycler {
         AutoKeysCycler(
             poster: poster,
             focuser: focuser,
             assertion: assertion,
-            sleeper: sleeper
+            sleeper: sleeper,
+            safety: safety
         )
     }
 
@@ -332,6 +334,166 @@ final class AutoKeysCyclerTests: XCTestCase {
         // Final yield is the .stopped(.userRequested) transition.
         let stopped = await iterator.next()
         XCTAssertEqual(stopped, AutoKeysCycler.State.stopped(reason: .userRequested))
+    }
+
+    // MARK: - Safety integration (Slope C wave 3, ADR 0004 Decision 9)
+
+    func testEngagement_PausesCyclerAndAutoResumesAfterGrace() async throws {
+        let poster = FakeKeyEventPoster()
+        let focuser = FakeWindowFocuser()
+        let assertion = FakePowerAssertion()
+        let sleeper = RecordingSleeper()
+        let tapping = FakeEventTapping()
+        // 200ms grace so the auto-resume lands inside the test's runtime.
+        let safety = AutoKeysSafetyMonitor(
+            tapping: tapping,
+            config: AutoKeysSafetyConfig(
+                killKeyCode: 80,
+                gesture: .holdFor(seconds: 1),
+                resumeGrace: 0.2
+            )
+        )
+        let cycler = makeCycler(
+            poster: poster,
+            focuser: focuser,
+            assertion: assertion,
+            sleeper: sleeper,
+            safety: safety
+        )
+
+        let seq = AutoKeysSequence(steps: [AutoKeysStep(keyCode: 49, delayAfter: 0.001)])!
+        try await cycler.start(
+            accounts: [.init(pid: 100, sequence: seq, label: "A")],
+            loopDelay: 0.01
+        )
+
+        // Wait for the loop to fire at least once.
+        await waitFor { poster.snapshot().count >= 1 }
+
+        // Inject a mouse-moved event → cycler pauses.
+        tapping.send(TappedEvent(kind: .mouseMoved, timestamp: Date(), isSelfTagged: false))
+
+        // Wait until the cycler reflects the paused state.
+        await waitFor {
+            if case .paused(AutoKeysCycler.PauseReason.userEngaged, _) = await cycler.state {
+                return true
+            }
+            return false
+        }
+
+        // After ~200ms (resumeGrace), the cycler should auto-resume.
+        await waitFor(timeout: 1.5) {
+            if case .running = await cycler.state { return true }
+            return false
+        }
+
+        let postResumeState = await cycler.state
+        if case .running = postResumeState {
+            // ok
+        } else {
+            XCTFail("Expected auto-resume to .running, got \(postResumeState)")
+        }
+
+        await cycler.stop()
+    }
+
+    func testKillRequest_StopsCyclerWithUserKilled() async throws {
+        let assertion = FakePowerAssertion()
+        let tapping = FakeEventTapping()
+        let safety = AutoKeysSafetyMonitor(
+            tapping: tapping,
+            config: AutoKeysSafetyConfig(
+                killKeyCode: 80,
+                // Tight hold so the kill fires fast.
+                gesture: .holdFor(seconds: 0.05),
+                resumeGrace: 5
+            )
+        )
+        let cycler = makeCycler(assertion: assertion, safety: safety)
+
+        let seq = AutoKeysSequence(steps: [AutoKeysStep(keyCode: 49, delayAfter: 0.001)])!
+        try await cycler.start(
+            accounts: [.init(pid: 100, sequence: seq, label: "A")],
+            loopDelay: 0.01
+        )
+
+        // Trigger the kill: keyDown on the kill key, hold past the deadline.
+        tapping.send(TappedEvent(kind: .keyDown(80), timestamp: Date(), isSelfTagged: false))
+
+        // Wait for the cycler to observe the .userKilled stop.
+        await waitFor(timeout: 1.5) {
+            if case .stopped(reason: .some(AutoKeysCycler.StopReason.userKilled)) = await cycler.state {
+                return true
+            }
+            return false
+        }
+
+        let finalState = await cycler.state
+        XCTAssertEqual(finalState, AutoKeysCycler.State.stopped(reason: .userKilled))
+        XCTAssertFalse(assertion.held())
+        XCTAssertEqual(assertion.releaseCount, 1)
+    }
+
+    func testExplicitPauseResume_RoundTripsThroughRunning() async throws {
+        let cycler = makeCycler()
+
+        let seq = AutoKeysSequence(steps: [AutoKeysStep(keyCode: 49, delayAfter: 0.001)])!
+        try await cycler.start(
+            accounts: [.init(pid: 100, sequence: seq, label: "A")],
+            loopDelay: 0.01
+        )
+
+        await cycler.pause()
+
+        let pausedState = await cycler.state
+        XCTAssertEqual(pausedState, AutoKeysCycler.State.paused(reason: .userRequested, until: nil))
+
+        await cycler.resume()
+
+        let resumedState = await cycler.state
+        if case .running = resumedState {
+            // ok
+        } else {
+            XCTFail("Expected .running after resume, got \(resumedState)")
+        }
+
+        await cycler.stop()
+    }
+
+    func testSelfTaggedEvents_DoNotPauseTheCycler() async throws {
+        let poster = FakeKeyEventPoster()
+        let assertion = FakePowerAssertion()
+        let tapping = FakeEventTapping()
+        let safety = AutoKeysSafetyMonitor(
+            tapping: tapping,
+            config: .default
+        )
+        let cycler = makeCycler(poster: poster, assertion: assertion, safety: safety)
+
+        let seq = AutoKeysSequence(steps: [AutoKeysStep(keyCode: 49, delayAfter: 0.001)])!
+        try await cycler.start(
+            accounts: [.init(pid: 100, sequence: seq, label: "A")],
+            loopDelay: 0.01
+        )
+
+        // Inject a flood of self-tagged events that mimic the cycler's
+        // own posted keystrokes coming back via the global monitor.
+        for _ in 0..<10 {
+            tapping.send(TappedEvent(kind: .keyDown(49), timestamp: Date(), isSelfTagged: true))
+            tapping.send(TappedEvent(kind: .keyUp(49), timestamp: Date(), isSelfTagged: true))
+        }
+
+        // Give the safety task a chance to consume the events.
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let state = await cycler.state
+        if case .running = state {
+            // ok — self-tagged events did NOT pause us.
+        } else {
+            XCTFail("Cycler paused on self-tagged events: \(state)")
+        }
+
+        await cycler.stop()
     }
 }
 

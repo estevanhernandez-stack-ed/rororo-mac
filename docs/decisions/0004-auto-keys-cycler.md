@@ -81,13 +81,33 @@ This ADR locks the model and the surface area before any code is written. The fe
 
 **Consequences:** Users who haven't granted Accessibility for hotkeys yet will hit the prompt the first time they press Play instead of the first time they configure a hotkey. Same UX, different trigger point — acceptable.
 
+## Decision 9 — Safety controls (added 2026-05-08)
+
+**Decision:** The cycler grows two safety mechanisms that operate independently of any UI control:
+
+1. **Engagement pause.** A global `NSEvent` monitor watches for human input (mouse moves OR key presses). On any input the cycler immediately transitions to `.paused(.userEngaged)` — releases focus, stops firing, surfaces a banner ("Auto-keys paused. Double-tap [key] / hold [key] for 1s to stop, or wait 5s to resume."). Five clean seconds → auto-resume. Continued input keeps extending the pause.
+2. **Kill key.** The user picks a designated key during recorder setup (default suggestion: F19 or a rare modifier combo) and a gesture: either hold-for-1s OR double-tap-within-600ms. The user picks the gesture in setup; we don't impose one. Triggering the gesture stops the cycler hard (`.stopped(.userKilled)`).
+
+**Rationale:** The cycler steals focus from whatever the user is doing on their Mac. If the only Stop control is a button in our toolbar, the user reaching for that button can land their click on a Roblox window mid-focus-grab — firing whatever Roblox keybind is under the cursor, or worse, taking a hit from an in-game enemy because the user's mouse is now driving game input. The escape hatch has to be input-channel-independent: a global key gesture works regardless of which window is frontmost, and the engagement pause means returning to the keyboard is itself a "wait, I'm here now" signal that buys the user time before the cycler grabs focus again.
+
+**Self-event tagging:** Every `CGEvent` the cycler posts is tagged with a custom `eventSourceUserData` value (`0x524F524F` = ASCII "RORO"). The engagement monitor reads the same field on incoming events and ignores anything tagged with our value — otherwise the cycler would pause itself on every keystroke it fires.
+
+**Two TCC prompts, not one.** This decision overrides the "one consent for everything" posture in Decision 8 — posting `CGEvent`s still requires Accessibility, and the global input monitor for the engagement detector requires Input Monitoring. They're separate TCC buckets in macOS 14+; the recorder setup screen explains both before either is requested. Users who decline Input Monitoring fall back to a degraded mode: kill key still works (it's a regular keyDown monitor that happens to need Input Monitoring too — so really if they decline, the kill key also fails; the cycler refuses to start in that case with a banner pointing to the setting).
+
+**Consequences:**
+- Mouse-move-during-AFK-grind pauses the cycle. Documented behavior. The 5 s auto-resume keeps it from being annoying when the user nudges the mouse on the way back from the bathroom.
+- The banner is rendered via `NSPanel` (floats above Roblox without stealing focus) so it's visible even when Roblox is frontmost.
+- Hold-vs-double-tap is a per-user preference, not a global default — picked once during recorder setup, persisted in `LaunchSettingsStore`.
+- Over time we may want a "do not pause on mouse" power-user toggle (some users genuinely afk-grind with the mouse moving from a wireless desk dance). Out of scope for v1.
+
 ## Implementation map
 
 | Layer | File | What it does |
 | --- | --- | --- |
 | Domain | `App/RORORO/Domain/AutoKeys/AutoKeysSequence.swift` | Value type, list of `AutoKeysStep`, max 3. |
 | Domain | `App/RORORO/Domain/AutoKeys/AutoKeysStep.swift` | `(keyCode: CGKeyCode, delayAfter: TimeInterval)`. |
-| Domain | `App/RORORO/Domain/AutoKeys/AutoKeysCycler.swift` | Singleton actor. State machine: `.stopped` / `.running(snapshot)` / `.paused`. Owns the loop `Task` and the `IOPMAssertionID`. |
+| Domain | `App/RORORO/Domain/AutoKeys/AutoKeysCycler.swift` | Singleton actor. State machine: `.stopped(reason?)` / `.running(pids)` / `.paused(reason)`. Owns the loop `Task` and the `IOPMAssertionID`. |
+| Domain | `App/RORORO/Domain/AutoKeys/AutoKeysSafetyMonitor.swift` | Global `NSEvent` monitor for mouseMoved + keyDown. Recognizes the configured kill-key gesture (hold-1s OR double-tap). Emits `.userEngaged` / `.killRequested` to the cycler. Tags from `KeyEventPoster` skip self-events. |
 | Domain | `App/RORORO/Domain/AutoKeys/CycleBudget.swift` | Pure `estimate(accounts:loopDelay:) -> TimeInterval` + threshold constants. |
 | Domain | `App/RORORO/Domain/AutoKeys/KeyEventPoster.swift` | Thin wrapper over `CGEvent.post` for testability (DI seam). |
 | Domain | `App/RORORO/Domain/AutoKeys/WindowFocuser.swift` | `focus(pid:) async throws` via `NSRunningApplication.activate`. |

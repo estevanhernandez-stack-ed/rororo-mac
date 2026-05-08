@@ -33,6 +33,11 @@ public final class LaunchSettingsStore: ObservableObject {
     /// AFK timer with budget left over for `CycleBudget.warnThreshold`
     /// (18 min) before the user has to trim sequences. See ADR 0004.
     @Published public private(set) var autoKeysLoopDelay: TimeInterval
+    /// Auto-keys safety config (Slope C, ADR 0004 Decision 9). Holds
+    /// the user's kill-key + gesture choice + resume grace. Default is
+    /// F19 + hold-1s + 5s grace; the recorder lets the user record any
+    /// other key and toggle hold/double-tap during setup.
+    @Published public private(set) var autoKeysSafety: AutoKeysSafetyConfig
 
     public static let defaultAutoKeysLoopDelay: TimeInterval = 14 * 60
 
@@ -50,6 +55,12 @@ public final class LaunchSettingsStore: ObservableObject {
             self.autoKeysLoopDelay = defaults.double(forKey: Keys.autoKeysLoopDelay)
         } else {
             self.autoKeysLoopDelay = Self.defaultAutoKeysLoopDelay
+        }
+        if let raw = defaults.data(forKey: Keys.autoKeysSafety),
+           let decoded = try? JSONDecoder().decode(AutoKeysSafetyConfig.self, from: raw) {
+            self.autoKeysSafety = decoded
+        } else {
+            self.autoKeysSafety = .default
         }
     }
 
@@ -82,6 +93,15 @@ public final class LaunchSettingsStore: ObservableObject {
         defaults.set(clamped, forKey: Keys.autoKeysLoopDelay)
     }
 
+    /// Persist the safety config (Slope C, ADR 0004 Decision 9). The
+    /// recorder writes this when the user picks their kill key + gesture.
+    public func setAutoKeysSafety(_ config: AutoKeysSafetyConfig) {
+        autoKeysSafety = config
+        if let encoded = try? JSONEncoder().encode(config) {
+            defaults.set(encoded, forKey: Keys.autoKeysSafety)
+        }
+    }
+
     /// Snapshot of current settings — used by the launcher to apply at
     /// launch time without holding a reference to the store on a non-main
     /// actor.
@@ -98,6 +118,7 @@ public final class LaunchSettingsStore: ObservableObject {
         static let framerateCap = "rororo.launch.framerateCap"
         static let fflags = "rororo.launch.fflags"
         static let autoKeysLoopDelay = "rororo.autoKeys.loopDelay"
+        static let autoKeysSafety = "rororo.autoKeys.safety"
     }
 }
 
