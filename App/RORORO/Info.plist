@@ -83,8 +83,14 @@
 	<string>https://estevanhernandez-stack-ed.github.io/rororo-mac/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>b5hOsbZVS61d3/wAN8hxf70HvfH3SOpuNVZES3QvhpI=</string>
-	<key>SUEnableInstallerLauncherService</key>
-	<true/>
+	<!-- SUEnableInstallerLauncherService is for SANDBOXED apps only.
+	     RORORO is non-sandboxed (App Sandbox would block the URL-scheme
+	     + cross-app spawn paths the multi-instance recipe needs). With
+	     this key set true on a non-sandboxed app, Sparkle's
+	     "Install and Relaunch" silently does nothing — the launcher-
+	     service XPC isn't properly bundled for the non-sandboxed flow,
+	     so the installer never auto-quits the app. Removed at v0.2.4
+	     after manual smoke caught the silent install. -->
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUScheduledCheckInterval</key>

@@ -142,41 +142,38 @@ echo "==> [5/8] Staple the notary ticket onto the .app"
 xcrun stapler staple "$APP_PATH"
 xcrun stapler validate "$APP_PATH"
 
-echo "==> [6/8] Build a branded DMG from the stapled .app"
-# create-dmg lays out a branded install window: navy background with the
-# cyan→magenta hairline + RORORO wordmark, .app icon at left, /Applications
-# drop-link at right. dmg-background@2x.png sits next to dmg-background.png
-# so create-dmg picks the retina variant on @2x displays.
+echo "==> [6/8] Build a barebones DMG from the stapled .app"
+# v0.2.4: ditched create-dmg's branded layout (background image + drop
+# link). Across v0.2.0..v0.2.3 Finder kept showing white margins around
+# the bg or restoring a stale window size from cache, regardless of
+# canvas size, --window-size, or per-version --volname. Two failed
+# escalations (canvas size 660→900, version-suffixed volname) ate two
+# release cycles without converging.
 #
-# Background is 900×550 with the original 540×380 brand canvas centered
-# inside a navy (#091023) fill. v0.2.1 used 660×420 — still didn't cover
-# the actual mounted Finder window (Finder honored --window-size for
-# `vibe.itboxName` cache or larger). The 900×550 canvas tolerates any
-# reasonable Finder window override and reads as intentional brand
-# surface (navy fills the gap). Icons positioned to overlay the centered
-# brand content: app at (320, 265), drop link at (580, 265). Original
-# 540×380 brand content sits at canvas offset (180, 85) → (720, 465).
+# Cutting losses: ship a plain hdiutil DMG. User opens, sees a single
+# RORORO.app icon, drags it wherever they want. Standard Mac install
+# pattern, zero Finder layout dependency, zero cache to fight. The brand
+# moment shifts from the install window to the app's first run.
 #
-# create-dmg refuses to overwrite an existing DMG; clear it first.
+# The bg image and create-dmg dependency are no longer used; the .png
+# files stay in tools/release/ in case we want to reintroduce a branded
+# DMG once we have a reliable layout strategy (or pivot to a .pkg).
+DMG_STAGE_DIR="$BUILD_DIR/dmg-stage"
+rm -rf "$DMG_STAGE_DIR"
+mkdir -p "$DMG_STAGE_DIR"
+cp -R "$APP_PATH" "$DMG_STAGE_DIR/RORORO.app"
+
 rm -f "$DMG_PATH"
-# Volume name includes the version so each release mounts as a fresh
-# Finder volume — `~/Library/Preferences/com.apple.finder.plist` keys
-# off the volume name, so reusing "RORORO" verbatim across versions
-# made Finder restore the user's last manual window resize and ignore
-# our --window-size + .DS_Store. With "RORORO 0.2.3" each version has
-# clean cache, our .DS_Store wins, the bg fills the window.
-create-dmg \
-  --volname "RORORO ${VERSION_NUMBER}" \
-  --background "$REPO_ROOT/tools/release/dmg-background.png" \
-  --window-pos 200 120 \
-  --window-size 900 550 \
-  --icon-size 96 \
-  --icon "RORORO.app" 320 265 \
-  --app-drop-link 580 265 \
-  --hide-extension "RORORO.app" \
-  --no-internet-enable \
-  "$DMG_PATH" \
-  "$APP_PATH"
+# Volume name carries the version — Finder caches per-volume layout,
+# so a fresh name per release means no stale state inherited from
+# v0.2.x layouts. UDZO = compressed read-only image, the default for
+# distribution DMGs.
+hdiutil create \
+  -volname "RORORO ${VERSION_NUMBER}" \
+  -srcfolder "$DMG_STAGE_DIR" \
+  -ov \
+  -format UDZO \
+  "$DMG_PATH"
 
 echo "==> [6.5/8] Submit the DMG to the notary service"
 # The .app's notary ticket lives inside the .app and survives DMG copy,

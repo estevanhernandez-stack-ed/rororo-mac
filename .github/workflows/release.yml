@@ -42,8 +42,10 @@ jobs:
           xcodebuild -version
           swift --version
 
-      - name: Install XcodeGen and create-dmg
-        run: brew install xcodegen create-dmg
+      - name: Install XcodeGen
+        # create-dmg dropped at v0.2.4 — DMG is now built via hdiutil
+        # (system-shipped) for a barebones single-icon install window.
+        run: brew install xcodegen
 
       - name: Generate Xcode project
         working-directory: App
