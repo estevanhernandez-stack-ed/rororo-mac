@@ -17,6 +17,14 @@ struct AccountsListView: View {
     @State private var inFlightLaunchUserId: String?
     @State private var lastLaunchError: String?
     @State private var pendingPickerForAccount: Account?
+    /// Slope B3' part 2 — inline relogin state. When a launch is gated
+    /// by an expired cookie (either pre-click via `account.cookieStatus`
+    /// or post-click via `APIError.cookieExpired`), we stash the launch
+    /// args so the relogin success path can retry the user's original
+    /// click without losing target.
+    @State private var pendingReloginForAccount: Account?
+    @State private var pendingReloginTarget: LaunchTarget?
+    @State private var pendingReloginSavedServerId: UUID?
 
     private let accountStore = AccountStore.shared
     private let favoriteStore = FavoriteGameStore.shared
@@ -56,6 +64,26 @@ struct AccountsListView: View {
                 },
                 onCancel: {
                     pendingPickerForAccount = nil
+                }
+            )
+        }
+        .sheet(item: $pendingReloginForAccount) { account in
+            ReloginSheet(
+                account: account,
+                onComplete: { refreshed in
+                    let target = pendingReloginTarget
+                    let savedServerId = pendingReloginSavedServerId
+                    pendingReloginForAccount = nil
+                    pendingReloginTarget = nil
+                    pendingReloginSavedServerId = nil
+                    if let target {
+                        launch(account: refreshed, target: target, savedServerId: savedServerId)
+                    }
+                },
+                onCancel: {
+                    pendingReloginForAccount = nil
+                    pendingReloginTarget = nil
+                    pendingReloginSavedServerId = nil
                 }
             )
         }
@@ -230,6 +258,18 @@ struct AccountsListView: View {
     }
 
     private func launch(account: Account, target: LaunchTarget, savedServerId: UUID?) {
+        // Slope B3' part 2 — proactive relogin gate. If we already
+        // know the cookie is expired (boot probe or prior launch
+        // failure), skip the doomed launch attempt and pop the
+        // relogin sheet directly. The sheet's onComplete recursively
+        // calls back into launch() with the refreshed account and
+        // the original target.
+        if account.cookieStatus == .expired {
+            pendingReloginTarget = target
+            pendingReloginSavedServerId = savedServerId
+            pendingReloginForAccount = account
+            return
+        }
         inFlightLaunchUserId = account.userId
         Task { @MainActor in
             defer { inFlightLaunchUserId = nil }
@@ -241,11 +281,16 @@ struct AccountsListView: View {
             } catch let error as RobloxApi.APIError {
                 // Mark the cookie expired in AccountStore so the row
                 // UI surfaces the badge BEFORE the next click attempt
-                // (Slope B3′). RobloxLauncher's getAuthTicket converts
+                // (Slope B3'). RobloxLauncher's getAuthTicket converts
                 // a 401 into APIError.cookieExpired; we trust that
-                // signal here.
+                // signal here. Then pop the relogin sheet inline rather
+                // than the generic alert — saves the user a click.
                 if case .cookieExpired = error {
                     accountStore.setCookieStatus(userId: account.userId, status: .expired)
+                    pendingReloginTarget = target
+                    pendingReloginSavedServerId = savedServerId
+                    pendingReloginForAccount = account
+                    return
                 }
                 lastLaunchError = describe(apiError: error)
             } catch let error as RobloxLauncher.LauncherError {
