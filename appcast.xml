@@ -8,6 +8,19 @@
         <description>Latest RORORO updates</description>
         <language>en</language>
         <item>
+            <title>v0.2.0</title>
+            <pubDate>Thu, 07 May 2026 23:12:33 +0000</pubDate>
+            <sparkle:version>0.2.0</sparkle:version>
+            <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+
+            <enclosure
+                url="https://github.com/estevanhernandez-stack-ed/rororo-mac/releases/download/v0.2.0/RORORO.dmg"
+                length="1814550"
+                type="application/octet-stream"
+                sparkle:edSignature="z9P0QSJ1Nf0/WPQbCzmywNO3Je9cpY40Ahr7jQNeXU15maXgagqtdo7/F0Gj/KIBd9EUDCj7IA+7GrqPK6JNDw=="/>
+        </item>
+        <item>
             <title>v0.1.5</title>
             <pubDate>Thu, 07 May 2026 20:05:39 +0000</pubDate>
             <sparkle:version>0.1.5</sparkle:version>
