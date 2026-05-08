@@ -349,6 +349,22 @@ private struct AccountRow: View {
             }
             .buttonStyle(.plain)
 
+            // Per-account framerate override badge. Only rendered when
+            // the account has an explicit override — accounts using the
+            // global setting (or with no cap at all) get no badge, so
+            // the row stays clean for users not engaged with per-account
+            // throttling. Renders on the same gradient as the primary
+            // button + chevron, distinguished by mono-micro size.
+            if let cap = account.framerateCapOverride {
+                Text("\(cap)FPS")
+                    .font(Theme.Font.monoMicro)
+                    .foregroundStyle(Color.white.opacity(0.85))
+                    .tracking(0.5)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 6)
+                    .accessibilityLabel("Per-account framerate cap: \(cap) frames per second")
+            }
+
             Menu {
                 Button("Launch into default", action: onLaunchPrimary)
                     .disabled(defaultDisplayName == nil)
