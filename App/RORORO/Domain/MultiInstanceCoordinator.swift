@@ -64,6 +64,12 @@ public final class MultiInstanceCoordinator {
         /// running. nil for non-RORORO-driven launches (e.g. URL
         /// handler dispatched from outside the app).
         let displayLabel: String?
+        /// Account userId, captured at the launch call site. Threaded
+        /// through to `RunningAccountTracker.register(pid:userId:)` once
+        /// the spawned Roblox settles (Slope C). nil for launches that
+        /// don't originate from a saved account (URL-handler dispatch
+        /// from outside the app).
+        let userId: String?
     }
     private var launchContinuation: AsyncStream<LaunchRequest>.Continuation?
     private var launchWorkerTask: Task<Void, Never>?
@@ -104,7 +110,12 @@ public final class MultiInstanceCoordinator {
                     semaphoreName: request.semaphoreName,
                     displayLabel: request.displayLabel
                 )
-                await Self.waitForLaunchToSettle(baseline: baseline)
+                let spawnedPid = await Self.waitForLaunchToSettle(baseline: baseline)
+                if let pid = spawnedPid, let userId = request.userId {
+                    await MainActor.run {
+                        RunningAccountTracker.shared.register(pid: pid, userId: userId)
+                    }
+                }
             }
         }
 
@@ -159,14 +170,15 @@ public final class MultiInstanceCoordinator {
     /// `MultiInstanceState.shared.lastError`. Yields the request to
     /// the serial launch worker so simultaneous calls don't race the
     /// 600MB app-copy step.
-    public func handleIncomingURL(_ url: URL, displayLabel: String? = nil) {
+    public func handleIncomingURL(_ url: URL, displayLabel: String? = nil, userId: String? = nil) {
         let enabled = MultiInstanceState.shared.enabled
         let semaphoreName = RobloxCompatStore.shared.currentSemaphoreName()
         let request = LaunchRequest(
             url: url,
             enabled: enabled,
             semaphoreName: semaphoreName,
-            displayLabel: displayLabel
+            displayLabel: displayLabel,
+            userId: userId
         )
         if let launchContinuation {
             launchContinuation.yield(request)
@@ -176,7 +188,14 @@ public final class MultiInstanceCoordinator {
             // never happen in production (.onAppear runs bootIfNeeded
             // before any URL routing) but keeps the interface honest.
             Task.detached(priority: .userInitiated) {
+                let baseline = Self.runningRobloxPIDs()
                 await Self.performLaunch(url, enabled: enabled, semaphoreName: semaphoreName, displayLabel: displayLabel)
+                let spawnedPid = await Self.waitForLaunchToSettle(baseline: baseline)
+                if let pid = spawnedPid, let userId {
+                    await MainActor.run {
+                        RunningAccountTracker.shared.register(pid: pid, userId: userId)
+                    }
+                }
             }
         }
     }
@@ -202,6 +221,17 @@ public final class MultiInstanceCoordinator {
     }
 
     @objc nonisolated private func handleAppDidTerminate(_ note: Notification) {
+        // Unregister the terminated pid from RunningAccountTracker so
+        // the cycler view-model stops trying to focus a dead window.
+        // Userinfo's NSWorkspaceApplicationKey carries the
+        // NSRunningApplication; pull the pid before the object goes away.
+        if let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+           app.bundleIdentifier?.hasPrefix("com.roblox") == true {
+            let pid = app.processIdentifier
+            Task { @MainActor in
+                RunningAccountTracker.shared.unregister(pid: pid)
+            }
+        }
         // Cheap filter: any termination event triggers a "is Roblox
         // still running" poll. Notification volume is low (one per
         // app quit, app-side); the poll is in-process and fast.
@@ -252,12 +282,15 @@ public final class MultiInstanceCoordinator {
     /// On any timeout, return — either the launch actually failed
     /// (stalling forever helps no one) or the user's machine is just
     /// slower than expected.
+    /// Wait for the spawned Roblox to settle. Returns the spawned pid
+    /// when one is found (caller can register it for tracking); nil if
+    /// nothing new appeared within `timeoutToAppear`.
     nonisolated private static func waitForLaunchToSettle(
         baseline: Set<pid_t>,
         timeoutToAppear: TimeInterval = 8.0,
         timeoutToFinishLaunching: TimeInterval = 20.0,
         postGrace: TimeInterval = 2.0
-    ) async {
+    ) async -> pid_t? {
         // Phase 1: wait for the new PID to appear in runningApplications.
         let appearDeadline = Date().addingTimeInterval(timeoutToAppear)
         var spawned: NSRunningApplication? = nil
@@ -272,7 +305,7 @@ public final class MultiInstanceCoordinator {
             }
             try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
         }
-        guard let spawned else { return }
+        guard let spawned else { return nil }
 
         // Phase 2: wait for isFinishedLaunching (engine has drawn its
         // first window + posted the Cocoa launch-finished notification).
@@ -288,6 +321,8 @@ public final class MultiInstanceCoordinator {
         // semaphore-recreation defenses) before the next queued
         // launch's sem_unlink + spawn lands.
         try? await Task.sleep(nanoseconds: UInt64(postGrace * 1_000_000_000))
+
+        return spawned.processIdentifier
     }
 
     // MARK: - Off-main worker (no actor isolation; runs on Task.detached)

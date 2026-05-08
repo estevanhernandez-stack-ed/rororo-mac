@@ -103,8 +103,13 @@ public final class RobloxLauncher {
             throw LauncherError.invalidLaunchURI
         }
         let displayLabel = account.displayName
+        let userId = account.userId
         await MainActor.run {
-            MultiInstanceCoordinator.shared.handleIncomingURL(url, displayLabel: displayLabel)
+            MultiInstanceCoordinator.shared.handleIncomingURL(
+                url,
+                displayLabel: displayLabel,
+                userId: userId
+            )
             AccountStore.shared.touchLastLaunched(userId: account.userId)
         }
     }

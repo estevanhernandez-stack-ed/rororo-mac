@@ -32,6 +32,10 @@ struct AccountsListView: View {
     /// Slope B1 — pending Launch Group sheet state. The sheet asks for
     /// target + FPS-share decisions before fanning out N launches.
     @State private var pendingGroupLaunch: PendingGroupLaunch?
+    /// Slope C wave 3b — pending auto-keys recorder. Tapping the row's
+    /// AutoKeysRowBadge sets this; the .sheet(item:) below opens the
+    /// recorder for that account.
+    @State private var pendingAutoKeysRecorderForAccount: Account?
 
     private struct PendingGroupLaunch: Identifiable {
         let id = UUID()
@@ -126,6 +130,17 @@ struct AccountsListView: View {
             }
         } message: {
             Text("Drop this account into a new group. Other accounts can join the same group from their menu.")
+        }
+        .sheet(item: $pendingAutoKeysRecorderForAccount) { account in
+            AutoKeysRecorderSheet(
+                isPresented: Binding(
+                    get: { pendingAutoKeysRecorderForAccount != nil },
+                    set: { newValue in
+                        if !newValue { pendingAutoKeysRecorderForAccount = nil }
+                    }
+                ),
+                account: account
+            )
         }
         .sheet(item: $pendingGroupLaunch) { pending in
             GroupLaunchSheet(
@@ -340,7 +355,10 @@ struct AccountsListView: View {
                 pendingNewGroupForAccount = account
                 pendingNewGroupName = ""
             },
-            onRemove: { remove(account: account) }
+            onRemove: { remove(account: account) },
+            onOpenAutoKeysRecorder: {
+                pendingAutoKeysRecorderForAccount = account
+            }
         )
     }
 
@@ -530,6 +548,8 @@ private struct AccountRow: View {
     let onSetGroup: (String?) -> Void
     let onAddNewGroup: () -> Void
     let onRemove: () -> Void
+    /// Slope C wave 3b — open the per-account auto-keys recorder.
+    let onOpenAutoKeysRecorder: () -> Void
 
     /// Frame-rate cap options surfaced in the per-account menu. nil =
     /// "Use global" (fall back to LaunchSettingsStore.shared.framerateCap).
@@ -562,6 +582,10 @@ private struct AccountRow: View {
                 }
             }
             Spacer()
+            // Auto-keys badge (Slope C wave 3b). Sits adjacent to the
+            // launch button — a separate affordance, not part of the
+            // launch flow. Tap opens the per-account recorder.
+            AutoKeysRowBadge(account: account, onTap: onOpenAutoKeysRecorder)
             if isLaunching {
                 ProgressView().controlSize(.small)
             } else {
