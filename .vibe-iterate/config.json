@@ -1,0 +1,12 @@
+{
+  "category": "Swift / SwiftUI macOS desktop app — Mac-native multi-Roblox launcher with Keychain vault and Sparkle 2.x auto-update; sibling to ROROROblox Windows",
+  "competitors": [
+    "https://github.com/AppleBlox/appleblox",
+    "https://github.com/pizzaboxer/bloxstrap",
+    "https://github.com/estevanhernandez-stack-ed/ROROROblox/releases"
+  ],
+  "framework_pins": [
+    { "name": "Sparkle", "version": "from 2.6.0" }
+  ],
+  "last_inferred_at": "2026-05-08T02:20:58Z"
+}
