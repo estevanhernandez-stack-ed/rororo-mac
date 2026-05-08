@@ -124,16 +124,35 @@ for i in $(seq 0 $((RELEASE_COUNT - 1))); do
 
   TAG_DIR="$DOWNLOAD_DIR/$TAG"
   mkdir -p "$TAG_DIR"
-  echo "  download $TAG → $TAG_DIR/$DMG_ASSET_NAME"
-  gh release download "$TAG" \
-    --repo "$GITHUB_REPO" \
-    --pattern '*.dmg' \
-    --dir "$TAG_DIR" \
-    --clobber
+
+  # Retry on transient network failures. v0.2.2's run died on a TLS
+  # handshake timeout against github's release-assets CDN while pulling
+  # an older release; without retry, one flake takes down the whole
+  # appcast regen. After 3 attempts, skip this tag — next run picks it
+  # up.
+  DMG_DOWNLOAD_OK=false
+  for attempt in 1 2 3; do
+    echo "  download $TAG (attempt $attempt) → $TAG_DIR/$DMG_ASSET_NAME"
+    if gh release download "$TAG" \
+      --repo "$GITHUB_REPO" \
+      --pattern '*.dmg' \
+      --dir "$TAG_DIR" \
+      --clobber; then
+      DMG_DOWNLOAD_OK=true
+      break
+    fi
+    echo "  attempt $attempt failed; sleeping 5s before retry"
+    sleep 5
+  done
+
+  if [[ "$DMG_DOWNLOAD_OK" != "true" ]]; then
+    echo "::warning::Download failed for $TAG after 3 attempts — skipping."
+    continue
+  fi
 
   DMG_LOCAL="$TAG_DIR/$DMG_ASSET_NAME"
   if [[ ! -f "$DMG_LOCAL" ]]; then
-    echo "::warning::Download failed for $TAG — skipping."
+    echo "::warning::Download reported success but $DMG_LOCAL missing — skipping."
     continue
   fi
 
