@@ -82,6 +82,21 @@ public final class RobloxLauncher {
             placeUrl: placeUrl
         )
 
+        // (4.5) Apply launch-time settings to Roblox's two write surfaces:
+        //   - GlobalBasicSettings_<N>.xml (~/Library/Roblox/...) for FramerateCap
+        //   - ClientAppSettings.json (inside Roblox.app bundle) for FFlags
+        // Both are best-effort: the launch must not abort if either writer
+        // fails. Roblox auto-recreates GlobalBasicSettings on first run and
+        // ignores a missing ClientAppSettings.json, so a no-op fallback is
+        // safe. Cleanup of ClientAppSettings on Roblox process exit is a
+        // follow-up — for now the next launch's atomic overwrite handles
+        // staleness; uninstalling RORORO leaves the last-written FFlags in
+        // place until the user resets via the app or hand-edits.
+        let snapshot = await MainActor.run {
+            LaunchSettingsStore.shared.snapshot()
+        }
+        Self.applyLaunchSettings(snapshot: snapshot)
+
         // (5) Hand to coordinator on main.
         guard let url = URL(string: uri) else {
             throw LauncherError.invalidLaunchURI
@@ -89,6 +104,29 @@ public final class RobloxLauncher {
         await MainActor.run {
             MultiInstanceCoordinator.shared.handleIncomingURL(url)
             AccountStore.shared.touchLastLaunched(userId: account.userId)
+        }
+    }
+
+    /// Best-effort writer dispatch. Failures are logged and swallowed —
+    /// the launch flow proceeds even if one or both writers can't run
+    /// (Roblox not installed yet, file permissions wonky, etc.). Public
+    /// for unit testing the dispatch logic; production callers go through
+    /// `launch(account:target:)`.
+    public static func applyLaunchSettings(snapshot: LaunchSettingsStore.Snapshot) {
+        if let cap = snapshot.framerateCap {
+            do {
+                try GlobalSettingsWriter.setFramerateCap(cap)
+            } catch {
+                NSLog("[RORORO] GlobalSettingsWriter failed: \(error)")
+            }
+        }
+        if !snapshot.fflags.isEmpty {
+            let payload: [String: Any] = snapshot.fflags.mapValues { $0.jsonObject }
+            do {
+                _ = try ClientSettingsWriter.write(flags: payload)
+            } catch {
+                NSLog("[RORORO] ClientSettingsWriter failed: \(error)")
+            }
         }
     }
 
