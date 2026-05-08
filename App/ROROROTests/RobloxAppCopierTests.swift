@@ -104,6 +104,59 @@ final class RobloxAppCopierTests: XCTestCase {
         XCTAssertTrue(copy.lastPathComponent.hasSuffix(".app"))
     }
 
+    func testCopyAppForInstance_DefaultsBundleNameToRobloxApp() throws {
+        // Per the Dock-name fix: each per-launch copy lives at
+        // `instances/<UUID>/<label>.app/`. With no `bundleLabel`
+        // argument the label falls back to "Roblox", so the bundle
+        // is `Roblox.app` — Dock shows "Roblox" for that instance.
+        let copy = try RobloxAppCopier.copyAppForInstance(
+            sourceAppPath: fakeAppURL.path,
+            supportDirOverride: tempRoot
+        )
+        defer { try? FileManager.default.removeItem(at: copy.deletingLastPathComponent()) }
+
+        XCTAssertEqual(copy.lastPathComponent, "Roblox.app")
+        XCTAssertTrue(copy.deletingLastPathComponent().path.contains("/instances/"))
+    }
+
+    func testCopyAppForInstance_NamesBundleAfterPlayerWhenLabelProvided() throws {
+        // Player-named bundles surface in the Dock per launch. Caller
+        // (RobloxLauncher) passes the launching account's display name.
+        let copy = try RobloxAppCopier.copyAppForInstance(
+            sourceAppPath: fakeAppURL.path,
+            supportDirOverride: tempRoot,
+            bundleLabel: "Estevan"
+        )
+        defer { try? FileManager.default.removeItem(at: copy.deletingLastPathComponent()) }
+
+        XCTAssertEqual(copy.lastPathComponent, "Estevan.app")
+    }
+
+    // MARK: - sanitizedBundleLabel
+
+    func testSanitizedBundleLabel_PassesThroughCleanNames() {
+        XCTAssertEqual(RobloxAppCopier.sanitizedBundleLabel(from: "Estevan"), "Estevan")
+        XCTAssertEqual(RobloxAppCopier.sanitizedBundleLabel(from: "Liz Lemon"), "Liz Lemon")
+        XCTAssertEqual(RobloxAppCopier.sanitizedBundleLabel(from: "alt_42"), "alt_42")
+    }
+
+    func testSanitizedBundleLabel_ReplacesForbiddenPathChars() {
+        XCTAssertEqual(RobloxAppCopier.sanitizedBundleLabel(from: "a/b"), "a-b")
+        XCTAssertEqual(RobloxAppCopier.sanitizedBundleLabel(from: "x:y"), "x-y")
+    }
+
+    func testSanitizedBundleLabel_FallsBackToRobloxOnEmptyOrNil() {
+        XCTAssertEqual(RobloxAppCopier.sanitizedBundleLabel(from: nil), "Roblox")
+        XCTAssertEqual(RobloxAppCopier.sanitizedBundleLabel(from: ""), "Roblox")
+        XCTAssertEqual(RobloxAppCopier.sanitizedBundleLabel(from: "   "), "Roblox")
+    }
+
+    func testSanitizedBundleLabel_CapsLengthSoDockDoesntTruncateMid() {
+        let long = String(repeating: "x", count: 100)
+        let sanitized = RobloxAppCopier.sanitizedBundleLabel(from: long)
+        XCTAssertLessThanOrEqual(sanitized.count, 48)
+    }
+
     func testCopyAppForInstance_TwoCallsProduceTwoDistinctCopies() throws {
         let first = try RobloxAppCopier.copyAppForInstance(
             sourceAppPath: fakeAppURL.path, supportDirOverride: tempRoot
@@ -127,17 +180,21 @@ final class RobloxAppCopierTests: XCTestCase {
             sourceAppPath: fakeAppURL.path, supportDirOverride: tempRoot
         )
 
-        // Backdate the creation date to 48h ago.
+        // The cleanup iterates entries directly under instances/, which
+        // are now the UUID parent dirs (not the .app bundles themselves).
+        // Backdate the parent so the cleanup sweep catches it.
+        let parentDir = copy.deletingLastPathComponent()
         let twoDaysAgo = Date().addingTimeInterval(-48 * 3600)
         try FileManager.default.setAttributes(
             [.creationDate: twoDaysAgo],
-            ofItemAtPath: copy.path
+            ofItemAtPath: parentDir.path
         )
 
-        // 24h cutoff (default) should sweep it.
+        // 24h cutoff (default) should sweep the whole parent dir.
         try RobloxAppCopier.cleanupStaleInstances(supportDirOverride: tempRoot)
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: copy.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: parentDir.path))
     }
 
     func testCleanupStaleInstances_NoOpWhenInstancesDirEmpty() {

@@ -92,9 +92,24 @@ public enum RobloxAppCopier {
     ///   4. setMultipleInstancesProhibition(at: copy, false)
     ///                                              // post-launch; defensive
     ///   5. SemaphoreBreaker.breakRobloxSingleton() // race buffer
+    /// Sanitize a free-form display string into a filename-safe bundle
+    /// label. Forbidden HFS+/APFS character `/` becomes `-`; trims
+    /// whitespace; caps length so the Dock doesn't elide the back of
+    /// the name. Empty / nil input returns the default `Roblox`.
+    public static func sanitizedBundleLabel(from raw: String?) -> String {
+        guard let raw else { return "Roblox" }
+        let cleaned = raw
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.isEmpty { return "Roblox" }
+        return String(cleaned.prefix(48))
+    }
+
     public static func copyAppForInstance(
         sourceAppPath: String = robloxAppPath,
-        supportDirOverride: URL? = nil
+        supportDirOverride: URL? = nil,
+        bundleLabel: String? = nil
     ) throws -> URL {
         // Validate source. Use directoryExists semantics — `.app` is a directory.
         var isDirectory: ObjCBool = false
@@ -103,9 +118,24 @@ public enum RobloxAppCopier {
             throw CopyError.sourceMissing(path: sourceAppPath)
         }
 
-        // Compute destination. Each launch gets a fresh UUID.
+        // Compute destination. Each launch gets a fresh UUID PARENT
+        // directory; the bundle inside is named after the launching
+        // account (or `Roblox` when no account context is available).
+        // macOS Dock displays the bundle's basename when CFBundleName-
+        // based dedup ties; using the account display name as the
+        // bundle name means each multi-instance Dock entry self-labels
+        // (caught by user observation 2026-05-08: "the bottom bar had
+        // numbers instead of names for each roblox window" → "could
+        // you nest it in the players name instead").
         let instancesURL = try instancesRoot(supportDirOverride: supportDirOverride)
-        let destURL = instancesURL.appendingPathComponent("\(UUID().uuidString).app", isDirectory: true)
+        let parentDir = instancesURL.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
+        } catch {
+            throw CopyError.supportDirCreationFailed(underlying: error.localizedDescription)
+        }
+        let label = Self.sanitizedBundleLabel(from: bundleLabel)
+        let destURL = parentDir.appendingPathComponent("\(label).app", isDirectory: true)
 
         let sourceURL = URL(fileURLWithPath: sourceAppPath, isDirectory: true)
 

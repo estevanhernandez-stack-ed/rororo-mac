@@ -57,6 +57,13 @@ public final class MultiInstanceCoordinator {
         let url: URL
         let enabled: Bool
         let semaphoreName: String
+        /// Account display label threaded through to RobloxAppCopier so
+        /// each per-launch bundle copy is named after the launching
+        /// account. Dock then shows e.g. "Estevan" instead of "Roblox"
+        /// (or worse, the UUID basename) when multiple instances are
+        /// running. nil for non-RORORO-driven launches (e.g. URL
+        /// handler dispatched from outside the app).
+        let displayLabel: String?
     }
     private var launchContinuation: AsyncStream<LaunchRequest>.Continuation?
     private var launchWorkerTask: Task<Void, Never>?
@@ -94,7 +101,8 @@ public final class MultiInstanceCoordinator {
                 await Self.performLaunch(
                     request.url,
                     enabled: request.enabled,
-                    semaphoreName: request.semaphoreName
+                    semaphoreName: request.semaphoreName,
+                    displayLabel: request.displayLabel
                 )
                 await Self.waitForLaunchToSettle(baseline: baseline)
             }
@@ -144,17 +152,21 @@ public final class MultiInstanceCoordinator {
     }
 
     /// Route an incoming `roblox-player:` URL through the multi-instance
-    /// recipe. Called from `.onOpenURL`. Non-throwing — errors land on
-    /// `MultiInstanceState.shared.lastError`. Yields the request to the
-    /// serial launch worker so simultaneous calls don't race the 600MB
-    /// app-copy step.
-    public func handleIncomingURL(_ url: URL) {
+    /// recipe. Called from `.onOpenURL` (which has no account context)
+    /// or from `RobloxLauncher.launch` (which passes the account's
+    /// display name via `displayLabel` so the per-launch bundle copy
+    /// can be named after the player). Non-throwing — errors land on
+    /// `MultiInstanceState.shared.lastError`. Yields the request to
+    /// the serial launch worker so simultaneous calls don't race the
+    /// 600MB app-copy step.
+    public func handleIncomingURL(_ url: URL, displayLabel: String? = nil) {
         let enabled = MultiInstanceState.shared.enabled
         let semaphoreName = RobloxCompatStore.shared.currentSemaphoreName()
         let request = LaunchRequest(
             url: url,
             enabled: enabled,
-            semaphoreName: semaphoreName
+            semaphoreName: semaphoreName,
+            displayLabel: displayLabel
         )
         if let launchContinuation {
             launchContinuation.yield(request)
@@ -164,7 +176,7 @@ public final class MultiInstanceCoordinator {
             // never happen in production (.onAppear runs bootIfNeeded
             // before any URL routing) but keeps the interface honest.
             Task.detached(priority: .userInitiated) {
-                await Self.performLaunch(url, enabled: enabled, semaphoreName: semaphoreName)
+                await Self.performLaunch(url, enabled: enabled, semaphoreName: semaphoreName, displayLabel: displayLabel)
             }
         }
     }
@@ -280,7 +292,7 @@ public final class MultiInstanceCoordinator {
 
     // MARK: - Off-main worker (no actor isolation; runs on Task.detached)
 
-    nonisolated private static func performLaunch(_ url: URL, enabled: Bool, semaphoreName: String) async {
+    nonisolated private static func performLaunch(_ url: URL, enabled: Bool, semaphoreName: String, displayLabel: String? = nil) async {
         if !enabled {
             // Multi-instance OFF — open the original Roblox.app with the URL.
             // Without our break, only one Roblox can run; the second click
@@ -316,7 +328,7 @@ public final class MultiInstanceCoordinator {
             //
             // `semaphoreName` comes from RobloxCompatStore so a Roblox
             // rename can be patched without an app release.
-            let copy = try RobloxAppCopier.copyAppForInstance()
+            let copy = try RobloxAppCopier.copyAppForInstance(bundleLabel: displayLabel)
             _ = SemaphoreBreaker.breakRobloxSingleton(name: semaphoreName)
             try await openRoblox(at: copy, with: url)
             try? RobloxAppCopier.setMultipleInstancesProhibitionPostLaunch(at: copy)

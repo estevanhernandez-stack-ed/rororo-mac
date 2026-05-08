@@ -95,12 +95,16 @@ public final class RobloxLauncher {
         }
         Self.applyLaunchSettings(snapshot: snapshot, account: account)
 
-        // (5) Hand to coordinator on main.
+        // (5) Hand to coordinator on main. Pass the account's display
+        // name so the per-launch bundle copy is named after the player
+        // — surfaces in the Dock as the player's name instead of
+        // "Roblox" or a UUID basename.
         guard let url = URL(string: uri) else {
             throw LauncherError.invalidLaunchURI
         }
+        let displayLabel = account.displayName
         await MainActor.run {
-            MultiInstanceCoordinator.shared.handleIncomingURL(url)
+            MultiInstanceCoordinator.shared.handleIncomingURL(url, displayLabel: displayLabel)
             AccountStore.shared.touchLastLaunched(userId: account.userId)
         }
     }
