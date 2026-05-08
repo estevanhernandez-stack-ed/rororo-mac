@@ -8,9 +8,22 @@
         <description>Latest RORORO updates</description>
         <language>en</language>
         <item>
+            <title>v0.2.3</title>
+            <pubDate>Fri, 08 May 2026 00:55:57 +0000</pubDate>
+            <sparkle:version>43</sparkle:version>
+            <sparkle:shortVersionString>0.2.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+
+            <enclosure
+                url="https://github.com/estevanhernandez-stack-ed/rororo-mac/releases/download/v0.2.3/RORORO.dmg"
+                length="1828844"
+                type="application/octet-stream"
+                sparkle:edSignature="yJzRPZyxIJry6B1bR/ZGy4SsCQTiaP/55adgsErta8fsGlqhH4ZOyMasOzxV7Tnie0hdldkkrfLzswugDIN7AQ=="/>
+        </item>
+        <item>
             <title>v0.2.2</title>
             <pubDate>Fri, 08 May 2026 00:41:30 +0000</pubDate>
-            <sparkle:version>0.2.2</sparkle:version>
+            <sparkle:version>42</sparkle:version>
             <sparkle:shortVersionString>0.2.2</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
 
@@ -23,7 +36,7 @@
         <item>
             <title>v0.2.1</title>
             <pubDate>Fri, 08 May 2026 00:25:10 +0000</pubDate>
-            <sparkle:version>0.2.1</sparkle:version>
+            <sparkle:version>39</sparkle:version>
             <sparkle:shortVersionString>0.2.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
 
@@ -36,7 +49,7 @@
         <item>
             <title>v0.2.0</title>
             <pubDate>Thu, 07 May 2026 23:12:33 +0000</pubDate>
-            <sparkle:version>0.2.0</sparkle:version>
+            <sparkle:version>37</sparkle:version>
             <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
 
@@ -49,7 +62,7 @@
         <item>
             <title>v0.1.5</title>
             <pubDate>Thu, 07 May 2026 20:05:39 +0000</pubDate>
-            <sparkle:version>0.1.5</sparkle:version>
+            <sparkle:version>24</sparkle:version>
             <sparkle:shortVersionString>0.1.5</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
 
@@ -62,7 +75,7 @@
         <item>
             <title>v0.1.4</title>
             <pubDate>Thu, 07 May 2026 19:56:37 +0000</pubDate>
-            <sparkle:version>0.1.4</sparkle:version>
+            <sparkle:version>23</sparkle:version>
             <sparkle:shortVersionString>0.1.4</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
 
@@ -75,7 +88,7 @@
         <item>
             <title>v0.1.3</title>
             <pubDate>Thu, 07 May 2026 19:49:35 +0000</pubDate>
-            <sparkle:version>0.1.3</sparkle:version>
+            <sparkle:version>22</sparkle:version>
             <sparkle:shortVersionString>0.1.3</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
 
@@ -88,7 +101,7 @@
         <item>
             <title>v0.1.2</title>
             <pubDate>Thu, 07 May 2026 19:38:57 +0000</pubDate>
-            <sparkle:version>0.1.2</sparkle:version>
+            <sparkle:version>21</sparkle:version>
             <sparkle:shortVersionString>0.1.2</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
 
@@ -101,7 +114,7 @@
         <item>
             <title>v0.1.1</title>
             <pubDate>Thu, 07 May 2026 19:30:54 +0000</pubDate>
-            <sparkle:version>0.1.1</sparkle:version>
+            <sparkle:version>20</sparkle:version>
             <sparkle:shortVersionString>0.1.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
 
@@ -114,7 +127,7 @@
         <item>
             <title>v0.1.0</title>
             <pubDate>Thu, 07 May 2026 19:15:32 +0000</pubDate>
-            <sparkle:version>0.1.0</sparkle:version>
+            <sparkle:version>19</sparkle:version>
             <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
 
