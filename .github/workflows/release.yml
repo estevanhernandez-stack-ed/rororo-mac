@@ -109,3 +109,45 @@ jobs:
           publish_branch: gh-pages
           keep_files: false
           commit_message: "release(appcast): publish appcast for ${{ github.ref_name }}"
+
+      - name: Bump Homebrew tap
+        # Auto-bump the cask in estevanhernandez-stack-ed/homebrew-rororo so
+        # `brew upgrade --cask rororo` picks up the new version without
+        # manual intervention. Skipped if HOMEBREW_TAP_PAT secret isn't set
+        # so the workflow still succeeds on machines without the tap PAT
+        # configured.
+        if: ${{ env.HAS_TAP_PAT == 'true' }}
+        env:
+          HOMEBREW_TAP_PAT: ${{ secrets.HOMEBREW_TAP_PAT }}
+          TAG_NAME: ${{ github.ref_name }}
+          HAS_TAP_PAT: ${{ secrets.HOMEBREW_TAP_PAT != '' }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG_NAME#v}"
+          SHA256="$(shasum -a 256 "build/RORORO.dmg" | awk '{print $1}')"
+          echo "Bumping cask to version=$VERSION sha256=$SHA256"
+
+          TAP_DIR="$RUNNER_TEMP/homebrew-rororo"
+          git clone "https://x-access-token:${HOMEBREW_TAP_PAT}@github.com/estevanhernandez-stack-ed/homebrew-rororo.git" "$TAP_DIR"
+
+          pushd "$TAP_DIR" >/dev/null
+          git config user.name "rororo-mac release bot"
+          git config user.email "actions@github.com"
+
+          # Idempotent rewrite: sed in-place rewrites version + sha256
+          # without touching anything else. -E uses extended regex; the
+          # leading whitespace + literal quotes anchor the match precisely.
+          sed -i.bak -E "s|^  version \".*\"|  version \"$VERSION\"|" Casks/rororo.rb
+          sed -i.bak -E "s|^  sha256 \".*\"|  sha256 \"$SHA256\"|" Casks/rororo.rb
+          rm -f Casks/rororo.rb.bak
+
+          if git diff --quiet; then
+            echo "Cask already at v$VERSION; no commit needed."
+            popd >/dev/null
+            exit 0
+          fi
+
+          git add Casks/rororo.rb
+          git commit -m "release(rororo): bump to v$VERSION (auto-bumped by release workflow)"
+          git push
+          popd >/dev/null
