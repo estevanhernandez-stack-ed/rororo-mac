@@ -77,6 +77,7 @@ jobs:
         # apple-actions/import-codesign-certs is the well-trodden fix — it
         # creates a build keychain, imports, persists the search list across
         # subsequent steps, and unlocks for $RUNNER_TEMP lifetime.
+        id: import-app-cert
         uses: apple-actions/import-codesign-certs@v3
         with:
           p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
@@ -86,13 +87,17 @@ jobs:
         # Second cert, distinct from Developer ID Application: signs the
         # .pkg envelope (productbuild) so macOS Installer.app trusts the
         # package + notarization picks up both the pkg sig and the inner
-        # .app sig. keychain-name set so import-codesign-certs reuses
-        # the existing build keychain rather than creating a fresh one
-        # (which would replace the search list and lose the App cert).
+        # .app sig. We import into the SAME `signing_temp` keychain the
+        # first step created (so xcodebuild's signing search list, which
+        # was set up by step 1, also resolves the Installer identity).
+        # `keychain-password` here is the keychain UNLOCK password — the
+        # first step auto-generated it and exposed it as an output, which
+        # we pipe through. Distinct from `p12-password` (which unwraps
+        # the .p12 envelope itself).
         uses: apple-actions/import-codesign-certs@v3
         with:
-          keychain-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           create-keychain: false
+          keychain-password: ${{ steps.import-app-cert.outputs.keychain-password }}
           p12-file-base64: ${{ secrets.MACOS_INSTALLER_CERTIFICATE }}
           p12-password: ${{ secrets.MACOS_INSTALLER_CERTIFICATE_PASSWORD }}
 
