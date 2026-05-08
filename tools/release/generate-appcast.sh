@@ -120,7 +120,21 @@ for i in $(seq 0 $((RELEASE_COUNT - 1))); do
     continue
   fi
 
-  VERSION="${TAG#v}"
+  # sparkle:shortVersionString (human display) = marketing version.
+  # sparkle:version (Sparkle's ordering key, compared as dotted-numeric)
+  # = monotonic build number from `git rev-list --count $TAG`. The
+  # bundle's CFBundleVersion is set to the same value at archive time
+  # (notarize.sh) so equal-tag-equal-build holds. Existing v0.2.x users
+  # on the broken pre-fix CFBundleVersion="2" see TAG_BUILD_NUMBER (>2)
+  # for the latest tag → update offered. Caught at v0.2.2: Sparkle
+  # showed "You're up to date" because "0.2.2" < "2" by dotted compare.
+  SHORT_VERSION="${TAG#v}"
+  TAG_BUILD_NUMBER="$(git rev-list --count "$TAG" 2>/dev/null || echo 0)"
+  if [[ "$TAG_BUILD_NUMBER" == "0" ]]; then
+    echo "::warning::Could not compute build number for $TAG (likely tags not fetched); skipping."
+    continue
+  fi
+  VERSION="$TAG_BUILD_NUMBER"
 
   TAG_DIR="$DOWNLOAD_DIR/$TAG"
   mkdir -p "$TAG_DIR"
@@ -180,7 +194,7 @@ for i in $(seq 0 $((RELEASE_COUNT - 1))); do
             <title>${NAME}</title>
             <pubDate>${PUB_DATE}</pubDate>
             <sparkle:version>${VERSION}</sparkle:version>
-            <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
+            <sparkle:shortVersionString>${SHORT_VERSION}</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
 ${CHANNEL_BLOCK}
             <enclosure

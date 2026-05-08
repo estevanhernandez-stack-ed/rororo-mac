@@ -16,6 +16,24 @@ set -euo pipefail
 : "${APPLE_TEAM_ID:?APPLE_TEAM_ID is required (10-char Apple Developer team ID)}"
 : "${APPLE_NOTARY_PASSWORD:?APPLE_NOTARY_PASSWORD is required (app-specific password from appleid.apple.com)}"
 : "${MACOS_CERTIFICATE_NAME:?MACOS_CERTIFICATE_NAME is required (e.g., \"Developer ID Application: Estevan Hernandez (XXXXXXXXXX)\")}"
+: "${TAG_NAME:?TAG_NAME is required (the v* tag firing the release)}"
+
+# Marketing version is the human-readable version (e.g. "0.2.3"); build
+# number is monotonic across all commits (commit count from git). The
+# build number drives Sparkle's update detection — v0.2.0..v0.2.2 all
+# shipped with CFBundleVersion=2 (frozen at Phase 0), so existing clients
+# saw appcast versions like "0.2.x" and Sparkle's dotted-numeric compare
+# treated their local "2" (= "2.0.0") as NEWER than "0.2.x". Caught at
+# v0.2.2 manual smoke 2026-05-07: "You're up to date" lie.
+#
+# Computing build number from `git rev-list --count HEAD` gives a
+# monotonic integer well past 2, so existing v0.2.x users ("2") will
+# correctly see the appcast as offering an update. release.yml passes
+# BUILD_NUMBER explicitly via env to avoid relying on git availability
+# inside this script.
+: "${BUILD_NUMBER:?BUILD_NUMBER is required (monotonic build number; computed in release.yml from git rev-list --count HEAD)}"
+
+VERSION_NUMBER="${TAG_NAME#v}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="$REPO_ROOT/build"
@@ -31,6 +49,7 @@ SCHEME="RORORO"
 mkdir -p "$BUILD_DIR"
 
 echo "==> [1/8] Archive (xcodebuild archive, Release config, manual signing)"
+echo "    MARKETING_VERSION=$VERSION_NUMBER  CURRENT_PROJECT_VERSION=$BUILD_NUMBER"
 xcodebuild archive \
   -project "$PROJECT_PATH" \
   -scheme "$SCHEME" \
@@ -39,6 +58,8 @@ xcodebuild archive \
   CODE_SIGN_IDENTITY="$MACOS_CERTIFICATE_NAME" \
   CODE_SIGN_STYLE=Manual \
   DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+  MARKETING_VERSION="$VERSION_NUMBER" \
+  CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
   | xcpretty || true
 # xcpretty is optional — if not installed, xcodebuild still ran. Verify the
 # archive landed.
@@ -138,8 +159,14 @@ echo "==> [6/8] Build a branded DMG from the stapled .app"
 #
 # create-dmg refuses to overwrite an existing DMG; clear it first.
 rm -f "$DMG_PATH"
+# Volume name includes the version so each release mounts as a fresh
+# Finder volume — `~/Library/Preferences/com.apple.finder.plist` keys
+# off the volume name, so reusing "RORORO" verbatim across versions
+# made Finder restore the user's last manual window resize and ignore
+# our --window-size + .DS_Store. With "RORORO 0.2.3" each version has
+# clean cache, our .DS_Store wins, the bg fills the window.
 create-dmg \
-  --volname "RORORO" \
+  --volname "RORORO ${VERSION_NUMBER}" \
   --background "$REPO_ROOT/tools/release/dmg-background.png" \
   --window-pos 200 120 \
   --window-size 900 550 \

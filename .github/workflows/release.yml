@@ -31,6 +31,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Full history + tags so generate-appcast.sh can compute
+          # `git rev-list --count <tag>` for the appcast's sparkle:version.
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Show toolchain versions
         run: |
@@ -75,12 +80,25 @@ jobs:
           p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
           p12-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
 
+      - name: Compute build number
+        # Monotonic per-commit build number used for both
+        # CFBundleVersion (the bundle) and sparkle:version (the appcast).
+        # Surfaces existing v0.2.x users from the "You're up to date"
+        # trap caused by their bundles shipping with CFBundleVersion="2"
+        # while the appcast quoted dotted-numeric versions like "0.2.2".
+        run: |
+          BUILD_NUMBER="$(git rev-list --count HEAD)"
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
+          echo "Computed BUILD_NUMBER=$BUILD_NUMBER"
+
       - name: Notarize and DMG
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
           MACOS_CERTIFICATE_NAME: ${{ secrets.MACOS_CERTIFICATE_NAME }}
+          # TAG_NAME + BUILD_NUMBER are inherited from the job-level env
+          # and the Compute build number step. notarize.sh asserts both.
         run: bash tools/release/notarize.sh
 
       - name: Attach DMG to GitHub Release
