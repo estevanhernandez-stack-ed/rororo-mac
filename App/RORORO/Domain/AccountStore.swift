@@ -126,6 +126,18 @@ public final class AccountStore {
         save()
     }
 
+    /// Set or clear the auto-keys sequence for one account (Slope C).
+    /// Pass `nil` to mark the account as not configured for auto-keys —
+    /// the cycler skips it. The sequence cap (≤ 3 steps) is already
+    /// enforced inside `AutoKeysSequence`'s failable initializer, so
+    /// callers either pass a valid sequence or nil. No-op when `userId`
+    /// doesn't match a saved account.
+    public func setAutoKeys(userId: String, sequence: AutoKeysSequence?) {
+        guard let idx = accounts.firstIndex(where: { $0.userId == userId }) else { return }
+        accounts[idx].autoKeys = sequence
+        save()
+    }
+
     /// All non-nil group names currently in use, sorted alphabetically.
     /// Drives the per-account chevron menu's "Group" submenu so users
     /// can drop an account into an existing group without retyping

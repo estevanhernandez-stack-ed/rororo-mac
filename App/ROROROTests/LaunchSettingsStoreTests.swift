@@ -84,6 +84,35 @@ final class LaunchSettingsStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.fflags["FFlagDebugGraphicsPreferMetal"], .bool(true))
     }
 
+    // MARK: - autoKeysLoopDelay (Slope C)
+
+    func testAutoKeysLoopDelay_DefaultsTo14Min() {
+        let store = LaunchSettingsStore(defaults: defaults)
+        XCTAssertEqual(store.autoKeysLoopDelay, 14 * 60, accuracy: 0.001)
+    }
+
+    func testAutoKeysLoopDelay_PersistsAcrossInstances() {
+        let store = LaunchSettingsStore(defaults: defaults)
+        store.setAutoKeysLoopDelay(600)
+
+        let reborn = LaunchSettingsStore(defaults: defaults)
+        XCTAssertEqual(reborn.autoKeysLoopDelay, 600, accuracy: 0.001)
+    }
+
+    func testAutoKeysLoopDelay_ClampsBelowFloor() {
+        let store = LaunchSettingsStore(defaults: defaults)
+        store.setAutoKeysLoopDelay(5)
+        // Floor is 30s — anything lower clamps up.
+        XCTAssertEqual(store.autoKeysLoopDelay, 30, accuracy: 0.001)
+    }
+
+    func testAutoKeysLoopDelay_ClampsAboveCeiling() {
+        let store = LaunchSettingsStore(defaults: defaults)
+        store.setAutoKeysLoopDelay(60 * 60) // 1 hour
+        // Ceiling is CycleBudget.hardCap = 19 * 60.
+        XCTAssertEqual(store.autoKeysLoopDelay, CycleBudget.hardCap, accuracy: 0.001)
+    }
+
     // MARK: - AnyCodableValue.jsonObject
 
     func testJsonObject_RoundTripsThroughJSONSerialization() throws {

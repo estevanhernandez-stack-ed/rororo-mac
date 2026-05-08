@@ -414,4 +414,89 @@ final class AccountStoreTests: XCTestCase {
 
         XCTAssertNil(decoded.first?.groupName)
     }
+
+    // MARK: - setAutoKeys / autoKeys backward compat (Slope C)
+
+    func testSetAutoKeys_PersistsValueAndSurvivesReload() throws {
+        let first = makeStore()
+        try first.add(
+            account: Account(userId: "1", username: "alice", displayName: "Alice"),
+            cookie: "a"
+        )
+
+        let seq = AutoKeysSequence(steps: [.spacebar(after: 2.0)])
+        first.setAutoKeys(userId: "1", sequence: seq)
+
+        XCTAssertEqual(first.accounts.first?.autoKeys?.steps.count, 1)
+        XCTAssertEqual(first.accounts.first?.autoKeys?.steps.first?.keyCode, 49)
+
+        let reloaded = AccountStore(storeURL: tempStoreURL)
+        XCTAssertEqual(reloaded.accounts.first?.autoKeys?.steps.count, 1)
+        XCTAssertEqual(reloaded.accounts.first?.autoKeys?.totalDuration, 2.0)
+    }
+
+    func testSetAutoKeys_NilClearsConfiguration() throws {
+        let store = makeStore()
+        let seq = AutoKeysSequence(steps: [.spacebar(after: 1.0)])!
+        try store.add(
+            account: Account(userId: "1", username: "alice", displayName: "Alice", autoKeys: seq),
+            cookie: "a"
+        )
+        XCTAssertNotNil(store.accounts.first?.autoKeys)
+
+        store.setAutoKeys(userId: "1", sequence: nil)
+        XCTAssertNil(store.accounts.first?.autoKeys)
+    }
+
+    func testSetAutoKeys_OnUnknownUser_DoesNotCrash() {
+        let store = makeStore()
+        store.setAutoKeys(userId: "nope", sequence: AutoKeysSequence(steps: []))
+        XCTAssertTrue(store.accounts.isEmpty)
+    }
+
+    func testAccount_DecodesFromLegacyJsonWithoutAutoKeysField() throws {
+        // accounts.json files written before Slope C don't carry autoKeys.
+        // The optional Codable field should decode as nil — never throw.
+        let legacyJson = """
+        [
+          {
+            "userId": "12345",
+            "username": "tester",
+            "displayName": "Tester",
+            "groupName": "alts",
+            "framerateCapOverride": 60
+          }
+        ]
+        """.data(using: .utf8)!
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode([Account].self, from: legacyJson)
+
+        XCTAssertEqual(decoded.count, 1)
+        XCTAssertNil(decoded.first?.autoKeys)
+        // Sibling fields still decode correctly — confirms additive shape.
+        XCTAssertEqual(decoded.first?.groupName, "alts")
+        XCTAssertEqual(decoded.first?.framerateCapOverride, 60)
+    }
+
+    func testAccount_RoundTripsAutoKeysThroughCodable() throws {
+        let original = Account(
+            userId: "1",
+            username: "alice",
+            displayName: "Alice",
+            autoKeys: AutoKeysSequence(steps: [
+                .spacebar(after: 1.5),
+                AutoKeysStep(keyCode: 13, delayAfter: 3.0),
+            ])
+        )
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(original)
+        let decoded = try JSONDecoder().decode(Account.self, from: data)
+
+        XCTAssertEqual(decoded, original)
+        XCTAssertEqual(decoded.autoKeys?.steps.count, 2)
+        XCTAssertEqual(decoded.autoKeys?.totalDuration, 4.5)
+    }
 }

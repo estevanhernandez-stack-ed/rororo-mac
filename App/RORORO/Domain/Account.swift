@@ -47,6 +47,13 @@ public struct Account: Codable, Equatable, Identifiable, Sendable {
     /// serial queue (B0). No fixed schema — group name is whatever the
     /// user types ("alts", "friends to play with", "grinding").
     public var groupName: String?
+    /// Auto-keys sequence for the cycler (Slope C). nil ≡ not configured
+    /// — the cycler skips this account on every iteration. A non-nil but
+    /// empty sequence is also legal ("configured, no steps") and likewise
+    /// skipped. The sequence cap (≤ 3 steps) is enforced inside
+    /// `AutoKeysSequence` itself; storage shape on disk is additive, so
+    /// pre-Slope-C `accounts.json` files decode with `autoKeys = nil`.
+    public var autoKeys: AutoKeysSequence?
 
     public var id: String { userId }
 
@@ -59,7 +66,8 @@ public struct Account: Codable, Equatable, Identifiable, Sendable {
         framerateCapOverride: Int? = nil,
         cookieStatus: CookieStatus? = nil,
         cookieCheckedAt: Date? = nil,
-        groupName: String? = nil
+        groupName: String? = nil,
+        autoKeys: AutoKeysSequence? = nil
     ) {
         self.userId = userId
         self.username = username
@@ -70,6 +78,7 @@ public struct Account: Codable, Equatable, Identifiable, Sendable {
         self.cookieStatus = cookieStatus
         self.cookieCheckedAt = cookieCheckedAt
         self.groupName = groupName
+        self.autoKeys = autoKeys
     }
 }
 

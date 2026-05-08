@@ -26,6 +26,15 @@ public final class LaunchSettingsStore: ObservableObject {
 
     @Published public private(set) var framerateCap: Int?
     @Published public private(set) var fflags: [String: AnyCodableValue]
+    /// Cycler loop delay in seconds (Slope C). The pause that the
+    /// cycler observes between completing one full pass over all
+    /// configured accounts and starting the next. Default `14 * 60`
+    /// (840s = 14 min) — sits comfortably under Roblox's ~20-minute
+    /// AFK timer with budget left over for `CycleBudget.warnThreshold`
+    /// (18 min) before the user has to trim sequences. See ADR 0004.
+    @Published public private(set) var autoKeysLoopDelay: TimeInterval
+
+    public static let defaultAutoKeysLoopDelay: TimeInterval = 14 * 60
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -36,6 +45,11 @@ public final class LaunchSettingsStore: ObservableObject {
             self.fflags = decoded
         } else {
             self.fflags = [:]
+        }
+        if defaults.object(forKey: Keys.autoKeysLoopDelay) != nil {
+            self.autoKeysLoopDelay = defaults.double(forKey: Keys.autoKeysLoopDelay)
+        } else {
+            self.autoKeysLoopDelay = Self.defaultAutoKeysLoopDelay
         }
     }
 
@@ -57,6 +71,17 @@ public final class LaunchSettingsStore: ObservableObject {
         }
     }
 
+    /// Set the cycler loop delay (Slope C). Clamped to a sane range —
+    /// Roblox's AFK timer wants ≤ 18 min per window (`CycleBudget.warnThreshold`),
+    /// and a delay of 0 still works (the cycler treats it as back-to-back
+    /// passes). The minimum 30 s prevents a user from accidentally
+    /// pegging a CPU on a tight loop.
+    public func setAutoKeysLoopDelay(_ value: TimeInterval) {
+        let clamped = max(30, min(value, CycleBudget.hardCap))
+        autoKeysLoopDelay = clamped
+        defaults.set(clamped, forKey: Keys.autoKeysLoopDelay)
+    }
+
     /// Snapshot of current settings — used by the launcher to apply at
     /// launch time without holding a reference to the store on a non-main
     /// actor.
@@ -72,6 +97,7 @@ public final class LaunchSettingsStore: ObservableObject {
     private enum Keys {
         static let framerateCap = "rororo.launch.framerateCap"
         static let fflags = "rororo.launch.fflags"
+        static let autoKeysLoopDelay = "rororo.autoKeys.loopDelay"
     }
 }
 
