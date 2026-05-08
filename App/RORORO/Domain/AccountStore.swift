@@ -115,6 +115,26 @@ public final class AccountStore {
         save()
     }
 
+    /// Set or clear the group label for one account (Slope B1). Pass
+    /// `nil` to remove the account from any group. Empty / whitespace
+    /// strings collapse to nil so a sloppy "Add to new group…" doesn't
+    /// create an invisible orphan group.
+    public func setGroupName(userId: String, name: String?) {
+        guard let idx = accounts.firstIndex(where: { $0.userId == userId }) else { return }
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        accounts[idx].groupName = (trimmed?.isEmpty == false) ? trimmed : nil
+        save()
+    }
+
+    /// All non-nil group names currently in use, sorted alphabetically.
+    /// Drives the per-account chevron menu's "Group" submenu so users
+    /// can drop an account into an existing group without retyping
+    /// the name.
+    public func uniqueGroupNames() -> [String] {
+        let names = accounts.compactMap { $0.groupName }
+        return Array(Set(names)).sorted()
+    }
+
     /// Probe every saved account's cookie against `users.roblox.com/v1/
     /// users/authenticated`. Best-effort, off-main, fail-soft per
     /// account: a single probe failure (network glitch, 5xx) marks

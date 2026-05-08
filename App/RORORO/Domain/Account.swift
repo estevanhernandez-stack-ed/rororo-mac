@@ -39,6 +39,14 @@ public struct Account: Codable, Equatable, Identifiable, Sendable {
     /// "checked Nm ago" if/when we add a manual refresh affordance.
     /// Updated by AccountStore.refreshAllAccounts on every probe pass.
     public var cookieCheckedAt: Date?
+    /// User-assigned group label (Slope B1). nil ≡ ungrouped — accounts
+    /// fall into a default top-of-list section. Multiple accounts with
+    /// the same `groupName` cluster under one section header in
+    /// AccountsListView, and the section gets a "Launch group" button
+    /// that enqueues a launch per member through MultiInstanceCoordinator's
+    /// serial queue (B0). No fixed schema — group name is whatever the
+    /// user types ("alts", "friends to play with", "grinding").
+    public var groupName: String?
 
     public var id: String { userId }
 
@@ -50,7 +58,8 @@ public struct Account: Codable, Equatable, Identifiable, Sendable {
         lastLaunchedAt: Date? = nil,
         framerateCapOverride: Int? = nil,
         cookieStatus: CookieStatus? = nil,
-        cookieCheckedAt: Date? = nil
+        cookieCheckedAt: Date? = nil,
+        groupName: String? = nil
     ) {
         self.userId = userId
         self.username = username
@@ -60,6 +69,7 @@ public struct Account: Codable, Equatable, Identifiable, Sendable {
         self.framerateCapOverride = framerateCapOverride
         self.cookieStatus = cookieStatus
         self.cookieCheckedAt = cookieCheckedAt
+        self.groupName = groupName
     }
 }
 

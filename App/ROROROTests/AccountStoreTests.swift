@@ -334,4 +334,84 @@ final class AccountStoreTests: XCTestCase {
         // custom date format.
         XCTAssertEqual(decodedStamp, now.timeIntervalSince1970, accuracy: 1.0)
     }
+
+    // MARK: - setGroupName / uniqueGroupNames (Slope B1)
+
+    func testSetGroupName_PersistsValueAndSurvivesReload() throws {
+        let first = makeStore()
+        try first.add(
+            account: Account(userId: "1", username: "alice", displayName: "Alice"),
+            cookie: "a"
+        )
+
+        first.setGroupName(userId: "1", name: "alts")
+        XCTAssertEqual(first.accounts.first?.groupName, "alts")
+
+        let reloaded = AccountStore(storeURL: tempStoreURL)
+        XCTAssertEqual(reloaded.accounts.first?.groupName, "alts")
+    }
+
+    func testSetGroupName_NilClearsGroup() throws {
+        let store = makeStore()
+        try store.add(
+            account: Account(userId: "1", username: "alice", displayName: "Alice", groupName: "alts"),
+            cookie: "a"
+        )
+        XCTAssertEqual(store.accounts.first?.groupName, "alts")
+
+        store.setGroupName(userId: "1", name: nil)
+        XCTAssertNil(store.accounts.first?.groupName)
+    }
+
+    func testSetGroupName_TrimsWhitespace_EmptyCollapsesToNil() throws {
+        let store = makeStore()
+        try store.add(
+            account: Account(userId: "1", username: "alice", displayName: "Alice"),
+            cookie: "a"
+        )
+
+        store.setGroupName(userId: "1", name: "  alts  ")
+        XCTAssertEqual(store.accounts.first?.groupName, "alts")
+
+        store.setGroupName(userId: "1", name: "   ")
+        XCTAssertNil(store.accounts.first?.groupName, "whitespace-only should collapse to nil so we don't create invisible orphan groups")
+    }
+
+    func testSetGroupName_OnUnknownUser_DoesNotCrash() {
+        let store = makeStore()
+        store.setGroupName(userId: "nope", name: "alts")
+        XCTAssertTrue(store.accounts.isEmpty)
+    }
+
+    func testUniqueGroupNames_ReturnsSortedDistinctValues() throws {
+        let store = makeStore()
+        try store.add(account: Account(userId: "1", username: "a", displayName: "A", groupName: "friends"), cookie: "x")
+        try store.add(account: Account(userId: "2", username: "b", displayName: "B", groupName: "alts"), cookie: "x")
+        try store.add(account: Account(userId: "3", username: "c", displayName: "C", groupName: "friends"), cookie: "x")
+        try store.add(account: Account(userId: "4", username: "d", displayName: "D", groupName: nil), cookie: "x")
+
+        let groups = store.uniqueGroupNames()
+
+        XCTAssertEqual(groups, ["alts", "friends"])
+    }
+
+    func testUniqueGroupNames_EmptyWhenNoGroupsSet() throws {
+        let store = makeStore()
+        try store.add(account: Account(userId: "1", username: "a", displayName: "A"), cookie: "x")
+        XCTAssertTrue(store.uniqueGroupNames().isEmpty)
+    }
+
+    func testAccount_DecodesFromLegacyJsonWithoutGroupNameField() throws {
+        let legacyJson = """
+        [
+          { "userId": "12345", "username": "tester", "displayName": "Tester" }
+        ]
+        """.data(using: .utf8)!
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode([Account].self, from: legacyJson)
+
+        XCTAssertNil(decoded.first?.groupName)
+    }
 }

@@ -25,6 +25,19 @@ struct AccountsListView: View {
     @State private var pendingReloginForAccount: Account?
     @State private var pendingReloginTarget: LaunchTarget?
     @State private var pendingReloginSavedServerId: UUID?
+    /// Slope B1 — alert state for "Add to new group…". Held alongside
+    /// the typed group-name binding so the alert's TextField is two-way.
+    @State private var pendingNewGroupForAccount: Account?
+    @State private var pendingNewGroupName: String = ""
+    /// Slope B1 — pending Launch Group sheet state. The sheet asks for
+    /// target + FPS-share decisions before fanning out N launches.
+    @State private var pendingGroupLaunch: PendingGroupLaunch?
+
+    private struct PendingGroupLaunch: Identifiable {
+        let id = UUID()
+        let groupName: String
+        let accounts: [Account]
+    }
 
     private let accountStore = AccountStore.shared
     private let favoriteStore = FavoriteGameStore.shared
@@ -85,6 +98,47 @@ struct AccountsListView: View {
                     pendingReloginTarget = nil
                     pendingReloginSavedServerId = nil
                 }
+            )
+        }
+        .alert(
+            "New group",
+            isPresented: Binding(
+                get: { pendingNewGroupForAccount != nil },
+                set: { newValue in
+                    if !newValue {
+                        pendingNewGroupForAccount = nil
+                        pendingNewGroupName = ""
+                    }
+                }
+            )
+        ) {
+            TextField("Group name", text: $pendingNewGroupName)
+            Button("Create") {
+                if let account = pendingNewGroupForAccount {
+                    accountStore.setGroupName(userId: account.userId, name: pendingNewGroupName)
+                }
+                pendingNewGroupForAccount = nil
+                pendingNewGroupName = ""
+            }
+            Button("Cancel", role: .cancel) {
+                pendingNewGroupForAccount = nil
+                pendingNewGroupName = ""
+            }
+        } message: {
+            Text("Drop this account into a new group. Other accounts can join the same group from their menu.")
+        }
+        .sheet(item: $pendingGroupLaunch) { pending in
+            GroupLaunchSheet(
+                groupName: pending.groupName,
+                accounts: pending.accounts,
+                favorites: favoriteStore.favorites,
+                servers: serverStore.servers,
+                onLaunch: { target, sharedCap in
+                    let accounts = pending.accounts
+                    pendingGroupLaunch = nil
+                    launchGroup(accounts, target: target, sharedCap: sharedCap)
+                },
+                onCancel: { pendingGroupLaunch = nil }
             )
         }
     }
@@ -200,38 +254,163 @@ struct AccountsListView: View {
 
     private var accountList: some View {
         let defaultName = RobloxLauncher.currentDefaultDisplayName()
-        return List(accountStore.accounts) { account in
-            AccountRow(
-                account: account,
-                isLaunching: inFlightLaunchUserId == account.userId,
-                defaultDisplayName: defaultName,
-                favorites: favoriteStore.favorites,
-                servers: serverStore.servers,
-                onLaunchPrimary: { launchPrimary(account: account) },
-                onPickFavorite: { game in
-                    favoriteStore.setDefault(placeId: game.placeId)
-                    launch(account: account, target: .place(placeId: game.placeId), savedServerId: nil)
-                },
-                onPickServer: { server in
-                    serverStore.setDefault(id: server.id)
-                    launch(
-                        account: account,
-                        target: .privateServer(
-                            placeId: server.placeId,
-                            code: server.code,
-                            kind: server.codeKind
-                        ),
-                        savedServerId: server.id
-                    )
-                },
-                onLaunchCustom: { pendingPickerForAccount = account },
-                onSetFramerateCap: { cap in
-                    accountStore.setFramerateCapOverride(userId: account.userId, cap: cap)
-                },
-                onRemove: { remove(account: account) }
-            )
+        let groups = groupedAccounts()
+        let existingGroups = accountStore.uniqueGroupNames()
+        return List {
+            ForEach(groups) { group in
+                if let groupName = group.name {
+                    Section {
+                        ForEach(group.accounts) { account in
+                            row(for: account, defaultName: defaultName, existingGroups: existingGroups)
+                        }
+                    } header: {
+                        groupHeader(name: groupName, accounts: group.accounts)
+                    }
+                } else {
+                    // Ungrouped accounts render without a header so the
+                    // existing flat-list look survives until a user
+                    // opts in to grouping.
+                    ForEach(group.accounts) { account in
+                        row(for: account, defaultName: defaultName, existingGroups: existingGroups)
+                    }
+                }
+            }
         }
         .listStyle(.inset)
+    }
+
+    /// Section header for a named account group. Shows the group name
+    /// + a "Launch group" button that opens the GroupLaunchSheet to
+    /// collect target + FPS-share choices before fanning launches out
+    /// through MultiInstanceCoordinator's serial queue.
+    private func groupHeader(name: String, accounts: [Account]) -> some View {
+        HStack {
+            Text(name.uppercased())
+                .font(Theme.Font.monoMicro)
+                .foregroundStyle(Theme.Color.fg3)
+                .tracking(1.4)
+            Spacer()
+            Button("Launch group") {
+                pendingGroupLaunch = PendingGroupLaunch(
+                    groupName: name,
+                    accounts: accounts
+                )
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(Theme.Color.productTeal)
+            .disabled(accounts.isEmpty)
+        }
+    }
+
+    @ViewBuilder
+    private func row(for account: Account, defaultName: String?, existingGroups: [String]) -> some View {
+        AccountRow(
+            account: account,
+            isLaunching: inFlightLaunchUserId == account.userId,
+            defaultDisplayName: defaultName,
+            favorites: favoriteStore.favorites,
+            servers: serverStore.servers,
+            existingGroups: existingGroups,
+            onLaunchPrimary: { launchPrimary(account: account) },
+            onPickFavorite: { game in
+                favoriteStore.setDefault(placeId: game.placeId)
+                launch(account: account, target: .place(placeId: game.placeId), savedServerId: nil)
+            },
+            onPickServer: { server in
+                serverStore.setDefault(id: server.id)
+                launch(
+                    account: account,
+                    target: .privateServer(
+                        placeId: server.placeId,
+                        code: server.code,
+                        kind: server.codeKind
+                    ),
+                    savedServerId: server.id
+                )
+            },
+            onLaunchCustom: { pendingPickerForAccount = account },
+            onSetFramerateCap: { cap in
+                accountStore.setFramerateCapOverride(userId: account.userId, cap: cap)
+            },
+            onSetGroup: { name in
+                accountStore.setGroupName(userId: account.userId, name: name)
+            },
+            onAddNewGroup: {
+                pendingNewGroupForAccount = account
+                pendingNewGroupName = ""
+            },
+            onRemove: { remove(account: account) }
+        )
+    }
+
+    private struct AccountGroup: Identifiable {
+        let id: String           // groupName, or "__ungrouped__" sentinel
+        let name: String?        // nil means the ungrouped bucket
+        let accounts: [Account]
+    }
+
+    /// Cluster the saved accounts by `groupName`. Ungrouped sit in
+    /// their own bucket at the top of the list (no header). Named
+    /// groups follow alphabetically. Order within a group preserves
+    /// AccountStore's insertion order so power users see a stable
+    /// list across re-renders.
+    private func groupedAccounts() -> [AccountGroup] {
+        let all = accountStore.accounts
+        let buckets = Dictionary(grouping: all, by: { $0.groupName })
+        var result: [AccountGroup] = []
+        if let ungrouped = buckets[nil], !ungrouped.isEmpty {
+            result.append(AccountGroup(id: "__ungrouped__", name: nil, accounts: ungrouped))
+        }
+        let namedKeys = buckets.keys.compactMap { $0 }.sorted()
+        for key in namedKeys {
+            result.append(AccountGroup(id: key, name: key, accounts: buckets[key] ?? []))
+        }
+        return result
+    }
+
+    /// Fan out a launch for every account in `accounts`, using the
+    /// group-launch modifiers chosen in `GroupLaunchSheet`. Each launch
+    /// goes through the same launch(account:target:savedServerId:)
+    /// path, which yields to MultiInstanceCoordinator's serial queue.
+    ///
+    /// `target` nil → each account uses `.defaultGame` (the global
+    /// favorite/server default). Concrete value → every account in the
+    /// group launches into the same place.
+    ///
+    /// `sharedCap` nil → each account uses its own framerateCapOverride
+    /// (or the global cap when no override). Concrete value → we hand
+    /// each launch a transient Account snapshot with that cap forced
+    /// in, so the launch flow's existing override-or-global precedence
+    /// resolves to the shared value without persisting it on disk.
+    private func launchGroup(_ accounts: [Account], target: LaunchTarget?, sharedCap: Int?) {
+        let effectiveTarget = target ?? .defaultGame
+        let savedServerId: UUID? = {
+            if case .privateServer = effectiveTarget,
+               let server = serverStore.servers.first(where: { server in
+                   target.flatMap { matchesServer($0, server) } ?? false
+               }) {
+                return server.id
+            }
+            return nil
+        }()
+        for account in accounts {
+            var effective = account
+            if let sharedCap {
+                effective.framerateCapOverride = sharedCap
+            }
+            launch(account: effective, target: effectiveTarget, savedServerId: savedServerId)
+        }
+    }
+
+    /// Match a chosen LaunchTarget back to the SavedPrivateServer that
+    /// produced it, so the savedServerId tracking touch fires after
+    /// the group launch lands.
+    private func matchesServer(_ target: LaunchTarget, _ server: SavedPrivateServer) -> Bool {
+        if case .privateServer(let placeId, let code, let kind) = target {
+            return server.placeId == placeId && server.code == code && server.codeKind == kind
+        }
+        return false
     }
 
     private var addAccountButton: some View {
@@ -342,11 +521,14 @@ private struct AccountRow: View {
     let defaultDisplayName: String?
     let favorites: [FavoriteGame]
     let servers: [SavedPrivateServer]
+    let existingGroups: [String]
     let onLaunchPrimary: () -> Void
     let onPickFavorite: (FavoriteGame) -> Void
     let onPickServer: (SavedPrivateServer) -> Void
     let onLaunchCustom: () -> Void
     let onSetFramerateCap: (Int?) -> Void
+    let onSetGroup: (String?) -> Void
+    let onAddNewGroup: () -> Void
     let onRemove: () -> Void
 
     /// Frame-rate cap options surfaced in the per-account menu. nil =
@@ -454,6 +636,25 @@ private struct AccountRow: View {
                 }
                 Button("Pick game / server…", action: onLaunchCustom)
                 Divider()
+                Menu("Group") {
+                    Button(account.groupName == nil
+                           ? "✓ Ungrouped"
+                           : "Ungrouped") {
+                        onSetGroup(nil)
+                    }
+                    if !existingGroups.isEmpty {
+                        Divider()
+                        ForEach(existingGroups, id: \.self) { name in
+                            Button(account.groupName == name
+                                   ? "✓ \(name)"
+                                   : name) {
+                                onSetGroup(name)
+                            }
+                        }
+                    }
+                    Divider()
+                    Button("Add to new group…", action: onAddNewGroup)
+                }
                 Section("Frame rate cap (this account)") {
                     Button(account.framerateCapOverride == nil
                            ? "✓ Use global"
