@@ -239,6 +239,14 @@ struct AccountsListView: View {
                     PrivateServerStore.shared.touchLastLaunched(id: savedServerId)
                 }
             } catch let error as RobloxApi.APIError {
+                // Mark the cookie expired in AccountStore so the row
+                // UI surfaces the badge BEFORE the next click attempt
+                // (Slope B3′). RobloxLauncher's getAuthTicket converts
+                // a 401 into APIError.cookieExpired; we trust that
+                // signal here.
+                if case .cookieExpired = error {
+                    accountStore.setCookieStatus(userId: account.userId, status: .expired)
+                }
                 lastLaunchError = describe(apiError: error)
             } catch let error as RobloxLauncher.LauncherError {
                 lastLaunchError = describe(launcherError: error)
@@ -310,7 +318,17 @@ private struct AccountRow: View {
                 Text("@\(account.username)")
                     .font(Theme.Font.bodySmall)
                     .foregroundStyle(Theme.Color.fg3)
-                if let last = account.lastLaunchedAt {
+                if account.cookieStatus == .expired {
+                    // Slope B3′ — surface cookie expiry per-row so
+                    // users see the rot before they click Launch As
+                    // and hit a generic alert. Boot-time probe in
+                    // App.onAppear refreshes this; launch-time
+                    // .cookieExpired catch in AccountsListView.launch
+                    // also marks expired live.
+                    Text("Login expired — needs re-login")
+                        .font(Theme.Font.monoMicro)
+                        .foregroundStyle(Theme.Color.stateDanger)
+                } else if let last = account.lastLaunchedAt {
                     Text("Last launched \(last.formatted(.relative(presentation: .named)))")
                         .font(Theme.Font.monoMicro)
                         .foregroundStyle(Theme.Color.fg3)

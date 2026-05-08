@@ -240,4 +240,98 @@ final class AccountStoreTests: XCTestCase {
         XCTAssertEqual(decoded, original)
         XCTAssertEqual(decoded.framerateCapOverride, 144)
     }
+
+    // MARK: - setCookieStatus / cookie-health backward compat
+
+    func testSetCookieStatus_PersistsValueAndTimestamp() throws {
+        let store = makeStore()
+        try store.add(
+            account: Account(userId: "12345", username: "tester", displayName: "Tester"),
+            cookie: "secret"
+        )
+
+        let before = Date()
+        store.setCookieStatus(userId: "12345", status: .expired)
+        let after = Date()
+
+        XCTAssertEqual(store.accounts.first?.cookieStatus, .expired)
+        let stamp = try XCTUnwrap(store.accounts.first?.cookieCheckedAt)
+        XCTAssertGreaterThanOrEqual(stamp, before.addingTimeInterval(-1))
+        XCTAssertLessThanOrEqual(stamp, after.addingTimeInterval(1))
+
+        // Roundtrip via JSON.
+        let reloaded = AccountStore(storeURL: tempStoreURL)
+        XCTAssertEqual(reloaded.accounts.first?.cookieStatus, .expired)
+    }
+
+    func testSetCookieStatus_OnUnknownUser_DoesNotCrash() {
+        let store = makeStore()
+        store.setCookieStatus(userId: "nope", status: .healthy)
+        XCTAssertTrue(store.accounts.isEmpty)
+    }
+
+    func testSetCookieStatus_TransitionsHealthyExpiredHealthy() throws {
+        let store = makeStore()
+        try store.add(
+            account: Account(userId: "1", username: "u", displayName: "U"),
+            cookie: "secret"
+        )
+
+        store.setCookieStatus(userId: "1", status: .healthy)
+        XCTAssertEqual(store.accounts.first?.cookieStatus, .healthy)
+
+        store.setCookieStatus(userId: "1", status: .expired)
+        XCTAssertEqual(store.accounts.first?.cookieStatus, .expired)
+
+        store.setCookieStatus(userId: "1", status: .healthy)
+        XCTAssertEqual(store.accounts.first?.cookieStatus, .healthy)
+    }
+
+    func testAccount_DecodesFromLegacyJsonWithoutCookieStatusField() throws {
+        // accounts.json files written before Slope B3′ don't carry
+        // cookieStatus or cookieCheckedAt. Both are optional Codable
+        // fields, so they decode as nil — never throws.
+        let legacyJson = """
+        [
+          {
+            "userId": "12345",
+            "username": "tester",
+            "displayName": "Tester"
+          }
+        ]
+        """.data(using: .utf8)!
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode([Account].self, from: legacyJson)
+
+        XCTAssertEqual(decoded.count, 1)
+        XCTAssertNil(decoded.first?.cookieStatus)
+        XCTAssertNil(decoded.first?.cookieCheckedAt)
+    }
+
+    func testAccount_RoundTripsCookieStatusThroughCodable() throws {
+        let now = Date()
+        let original = Account(
+            userId: "1",
+            username: "alice",
+            displayName: "Alice",
+            cookieStatus: .expired,
+            cookieCheckedAt: now
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(original)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(Account.self, from: data)
+
+        XCTAssertEqual(decoded.cookieStatus, .expired)
+        let decodedStamp = try XCTUnwrap(decoded.cookieCheckedAt?.timeIntervalSince1970)
+        // .iso8601 strategy truncates to whole seconds; tolerate a 1.0s
+        // difference to keep the round-trip honest without coupling to a
+        // custom date format.
+        XCTAssertEqual(decodedStamp, now.timeIntervalSince1970, accuracy: 1.0)
+    }
 }

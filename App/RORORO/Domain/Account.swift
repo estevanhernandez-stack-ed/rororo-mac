@@ -30,6 +30,14 @@ public struct Account: Codable, Equatable, Identifiable, Sendable {
     /// observed cap collapses to the last-written value. Sequential
     /// clicks (the normal flow) work cleanly.
     public var framerateCapOverride: Int?
+    /// Last-known health of the saved `.ROBLOSECURITY` cookie (Slope B3′).
+    /// nil ≡ never-probed (treated as .unknown by callers). Surfaces
+    /// expiry to the row UI BEFORE the user clicks Launch As — historically
+    /// expiry only manifested at launch-fail time with a generic alert.
+    public var cookieStatus: CookieStatus?
+    /// Wall-clock of the last cookie-health probe. Lets the UI show
+    /// "checked Nm ago" if/when we add a manual refresh affordance.
+    public var cookieCheckedAt: Date?
 
     public var id: String { userId }
 
@@ -39,7 +47,9 @@ public struct Account: Codable, Equatable, Identifiable, Sendable {
         displayName: String,
         avatarThumbnailURL: URL? = nil,
         lastLaunchedAt: Date? = nil,
-        framerateCapOverride: Int? = nil
+        framerateCapOverride: Int? = nil,
+        cookieStatus: CookieStatus? = nil,
+        cookieCheckedAt: Date? = nil
     ) {
         self.userId = userId
         self.username = username
@@ -47,5 +57,23 @@ public struct Account: Codable, Equatable, Identifiable, Sendable {
         self.avatarThumbnailURL = avatarThumbnailURL
         self.lastLaunchedAt = lastLaunchedAt
         self.framerateCapOverride = framerateCapOverride
+        self.cookieStatus = cookieStatus
+        self.cookieCheckedAt = cookieCheckedAt
     }
+}
+
+/// Last-known health of the `.ROBLOSECURITY` cookie. Stored on Account
+/// so the UI can surface expiry per-row without re-probing on every
+/// render. Probed on app boot via AccountStore.refreshAllCookieStatuses
+/// and on launch-time `APIError.cookieExpired` interception.
+public enum CookieStatus: String, Codable, Equatable, Sendable {
+    /// Probed within recent memory and Roblox accepted the cookie.
+    case healthy
+    /// Probe got a 401 — the cookie is no longer valid for auth ticket
+    /// or user-profile calls. The user needs to re-login (inline via
+    /// CookieCapture, or by remove + re-add).
+    case expired
+    /// Probed but Roblox returned a transient error (5xx, network).
+    /// Treated like `.unknown` for badge UX; we'll re-probe later.
+    case transient
 }

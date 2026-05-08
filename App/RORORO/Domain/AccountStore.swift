@@ -104,6 +104,43 @@ public final class AccountStore {
         save()
     }
 
+    /// Update the cookie health status + checked-at timestamp for one
+    /// account. Called by the boot-time probe + by RobloxLauncher on
+    /// `APIError.cookieExpired` interception. No-op when `userId`
+    /// doesn't match.
+    public func setCookieStatus(userId: String, status: CookieStatus, at date: Date = Date()) {
+        guard let idx = accounts.firstIndex(where: { $0.userId == userId }) else { return }
+        accounts[idx].cookieStatus = status
+        accounts[idx].cookieCheckedAt = date
+        save()
+    }
+
+    /// Probe every saved account's cookie against `users.roblox.com/v1/
+    /// users/authenticated`. Best-effort, off-main, fail-soft per
+    /// account: a single probe failure (network glitch, 5xx) marks
+    /// that account `.transient`; subsequent boots re-probe.
+    /// Run from `App.onAppear` so the row UI surfaces expiry as early
+    /// as possible — without the user having to attempt a launch first.
+    public func refreshAllCookieStatuses() async {
+        let snapshot = accounts
+        for account in snapshot {
+            let cookie = (try? cookie(for: account.userId)) ?? nil
+            guard let cookie, !cookie.isEmpty else {
+                continue
+            }
+            let status: CookieStatus
+            do {
+                _ = try await RobloxApi.getUserProfile(cookie: cookie)
+                status = .healthy
+            } catch RobloxApi.APIError.cookieExpired {
+                status = .expired
+            } catch {
+                status = .transient
+            }
+            setCookieStatus(userId: account.userId, status: status)
+        }
+    }
+
     // MARK: - Persistence
 
     private func load() {
