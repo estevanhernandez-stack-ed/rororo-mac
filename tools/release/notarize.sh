@@ -127,16 +127,23 @@ echo "==> [6/8] Build a branded DMG from the stapled .app"
 # drop-link at right. dmg-background@2x.png sits next to dmg-background.png
 # so create-dmg picks the retina variant on @2x displays.
 #
+# Background is 660×420 with the original 540×380 brand canvas centered
+# inside a navy (#091023) fill — Finder occasionally restores a wider
+# window from a cached .DS_Store, so the navy padding ensures the layout
+# still reads as intentional even if the visible window doesn't exactly
+# match --window-size. Icons positioned relative to the centered content:
+# app icon at (200, 200), drop link at (460, 200).
+#
 # create-dmg refuses to overwrite an existing DMG; clear it first.
 rm -f "$DMG_PATH"
 create-dmg \
   --volname "RORORO" \
   --background "$REPO_ROOT/tools/release/dmg-background.png" \
   --window-pos 200 120 \
-  --window-size 540 380 \
+  --window-size 660 420 \
   --icon-size 96 \
-  --icon "RORORO.app" 140 180 \
-  --app-drop-link 400 180 \
+  --icon "RORORO.app" 200 200 \
+  --app-drop-link 460 200 \
   --hide-extension "RORORO.app" \
   --no-internet-enable \
   "$DMG_PATH" \
