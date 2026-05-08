@@ -15,7 +15,8 @@ set -euo pipefail
 : "${APPLE_ID:?APPLE_ID is required (Apple Developer Apple ID email)}"
 : "${APPLE_TEAM_ID:?APPLE_TEAM_ID is required (10-char Apple Developer team ID)}"
 : "${APPLE_NOTARY_PASSWORD:?APPLE_NOTARY_PASSWORD is required (app-specific password from appleid.apple.com)}"
-: "${MACOS_CERTIFICATE_NAME:?MACOS_CERTIFICATE_NAME is required (e.g., \"Developer ID Application: Estevan Hernandez (XXXXXXXXXX)\")}"
+: "${MACOS_CERTIFICATE_NAME:?MACOS_CERTIFICATE_NAME is required (e.g., \"Developer ID Application: Estevan Hernandez (XXXXXXXXXX)\") — signs the .app}"
+: "${MACOS_INSTALLER_CERTIFICATE_NAME:?MACOS_INSTALLER_CERTIFICATE_NAME is required (e.g., \"Developer ID Installer: Estevan Hernandez (XXXXXXXXXX)\") — signs the .pkg. Distinct cert from the Application cert; generate at https://developer.apple.com/account/resources/certificates/add and upload as a separate p12 secret. See tools/release/README.md.}"
 : "${TAG_NAME:?TAG_NAME is required (the v* tag firing the release)}"
 
 # Marketing version is the human-readable version (e.g. "0.2.3"); build
@@ -42,7 +43,7 @@ EXPORT_DIR="$BUILD_DIR/export"
 EXPORT_OPTIONS="$REPO_ROOT/tools/release/exportOptions.plist"
 APP_PATH="$EXPORT_DIR/RORORO.app"
 ZIP_PATH="$BUILD_DIR/RORORO.zip"
-DMG_PATH="$BUILD_DIR/RORORO.dmg"
+PKG_PATH="$BUILD_DIR/RORORO.pkg"
 PROJECT_PATH="$REPO_ROOT/App/RORORO.xcodeproj"
 SCHEME="RORORO"
 
@@ -142,56 +143,57 @@ echo "==> [5/8] Staple the notary ticket onto the .app"
 xcrun stapler staple "$APP_PATH"
 xcrun stapler validate "$APP_PATH"
 
-echo "==> [6/8] Build a barebones DMG from the stapled .app"
-# v0.2.4: ditched create-dmg's branded layout (background image + drop
-# link). Across v0.2.0..v0.2.3 Finder kept showing white margins around
-# the bg or restoring a stale window size from cache, regardless of
-# canvas size, --window-size, or per-version --volname. Two failed
-# escalations (canvas size 660→900, version-suffixed volname) ate two
-# release cycles without converging.
+echo "==> [6/8] Build a signed .pkg installer wrapping the stapled .app"
+# v0.2.5: pivoted from .dmg to .pkg. Across v0.2.0..v0.2.4 the DMG path
+# never converged on a clean install UX — branded DMG fought Finder
+# layout cache, barebones DMG made users drag the .app to /Applications
+# manually (which several missed, ending up running RORORO from
+# /Volumes/RORORO indefinitely until the launch surface broke).
 #
-# Cutting losses: ship a plain hdiutil DMG. User opens, sees a single
-# RORORO.app icon, drags it wherever they want. Standard Mac install
-# pattern, zero Finder layout dependency, zero cache to fight. The brand
-# moment shifts from the install window to the app's first run.
+# .pkg is the right shape: user double-clicks → macOS Installer.app
+# walks the standard "Continue / Install" flow → admin password →
+# .app lands in /Applications atomically. No layout, no drag, no
+# "did you remember to move it?" footgun.
 #
-# The bg image and create-dmg dependency are no longer used; the .png
-# files stay in tools/release/ in case we want to reintroduce a branded
-# DMG once we have a reliable layout strategy (or pivot to a .pkg).
-DMG_STAGE_DIR="$BUILD_DIR/dmg-stage"
-rm -rf "$DMG_STAGE_DIR"
-mkdir -p "$DMG_STAGE_DIR"
-cp -R "$APP_PATH" "$DMG_STAGE_DIR/RORORO.app"
+# productbuild's --component flag wraps a single .app into a flat .pkg
+# whose payload installs to /Applications. Signed with the Developer ID
+# Installer cert (distinct from the Developer ID Application cert that
+# signed the .app — Apple separates "I made this app" trust from
+# "I made this installer" trust, and notarization checks both).
+rm -f "$PKG_PATH"
+productbuild \
+  --component "$APP_PATH" /Applications \
+  --sign "$MACOS_INSTALLER_CERTIFICATE_NAME" \
+  --version "$VERSION_NUMBER" \
+  "$PKG_PATH"
 
-rm -f "$DMG_PATH"
-# Volume name carries the version — Finder caches per-volume layout,
-# so a fresh name per release means no stale state inherited from
-# v0.2.x layouts. UDZO = compressed read-only image, the default for
-# distribution DMGs.
-hdiutil create \
-  -volname "RORORO ${VERSION_NUMBER}" \
-  -srcfolder "$DMG_STAGE_DIR" \
-  -ov \
-  -format UDZO \
-  "$DMG_PATH"
+if [[ ! -f "$PKG_PATH" ]]; then
+  echo "::error::productbuild failed — $PKG_PATH not created."
+  exit 1
+fi
 
-echo "==> [6.5/8] Submit the DMG to the notary service"
-# The .app's notary ticket lives inside the .app and survives DMG copy,
-# but the DMG envelope itself also needs a ticket so first-mount Gatekeeper
-# checks pass without a network round-trip. Submit + wait + staple.
-DMG_SUBMIT_OUTPUT="$(xcrun notarytool submit "$DMG_PATH" \
+# Sanity: confirm the pkg is signed before submitting to notary.
+echo "    verify: pkgutil --check-signature"
+pkgutil --check-signature "$PKG_PATH"
+
+echo "==> [6.5/8] Submit the .pkg to the notary service"
+# notarytool ingests .pkg natively. Apple's notary checks both the
+# pkg's installer signature (Developer ID Installer) and every
+# binary in the payload (Developer ID Application). Both must
+# resolve cleanly or notarization rejects.
+PKG_SUBMIT_OUTPUT="$(xcrun notarytool submit "$PKG_PATH" \
   --apple-id "$APPLE_ID" \
   --team-id "$APPLE_TEAM_ID" \
   --password "$APPLE_NOTARY_PASSWORD" \
   --wait 2>&1)"
-echo "$DMG_SUBMIT_OUTPUT"
-DMG_STATUS="$(echo "$DMG_SUBMIT_OUTPUT" | sed -nE 's/^[[:space:]]*status:[[:space:]]+(.+)$/\1/p' | tail -n 1)"
-DMG_SUBMISSION_ID="$(echo "$DMG_SUBMIT_OUTPUT" | sed -nE 's/^[[:space:]]*id:[[:space:]]+([a-f0-9-]+).*/\1/p' | head -n 1)"
+echo "$PKG_SUBMIT_OUTPUT"
+PKG_STATUS="$(echo "$PKG_SUBMIT_OUTPUT" | sed -nE 's/^[[:space:]]*status:[[:space:]]+(.+)$/\1/p' | tail -n 1)"
+PKG_SUBMISSION_ID="$(echo "$PKG_SUBMIT_OUTPUT" | sed -nE 's/^[[:space:]]*id:[[:space:]]+([a-f0-9-]+).*/\1/p' | head -n 1)"
 
-if [[ "$DMG_STATUS" != "Accepted" ]]; then
-  echo "::error::DMG notarization status is '$DMG_STATUS' (id=$DMG_SUBMISSION_ID)."
-  if [[ -n "$DMG_SUBMISSION_ID" ]]; then
-    xcrun notarytool log "$DMG_SUBMISSION_ID" \
+if [[ "$PKG_STATUS" != "Accepted" ]]; then
+  echo "::error::PKG notarization status is '$PKG_STATUS' (id=$PKG_SUBMISSION_ID)."
+  if [[ -n "$PKG_SUBMISSION_ID" ]]; then
+    xcrun notarytool log "$PKG_SUBMISSION_ID" \
       --apple-id "$APPLE_ID" \
       --team-id "$APPLE_TEAM_ID" \
       --password "$APPLE_NOTARY_PASSWORD" || true
@@ -199,15 +201,15 @@ if [[ "$DMG_STATUS" != "Accepted" ]]; then
   exit 1
 fi
 
-echo "==> [7/8] Staple the DMG"
-xcrun stapler staple "$DMG_PATH"
-xcrun stapler validate "$DMG_PATH"
+echo "==> [7/8] Staple the .pkg"
+xcrun stapler staple "$PKG_PATH"
+xcrun stapler validate "$PKG_PATH"
 
 echo "==> [8/8] Done"
-echo "DMG: $DMG_PATH"
+echo "PKG: $PKG_PATH"
 
 # GitHub Actions output (modern + legacy syntax for compatibility).
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-  echo "dmg=$DMG_PATH" >> "$GITHUB_OUTPUT"
+  echo "pkg=$PKG_PATH" >> "$GITHUB_OUTPUT"
 fi
-echo "::set-output name=dmg::$DMG_PATH"
+echo "::set-output name=pkg::$PKG_PATH"

@@ -113,10 +113,17 @@ for i in $(seq 0 $((RELEASE_COUNT - 1))); do
   CREATED_AT="$(echo "$RELEASE" | jq -r '.createdAt')"
   IS_PRERELEASE="$(echo "$RELEASE" | jq -r '.isPrerelease')"
 
-  DMG_ASSET_URL="$(echo "$RELEASE" | jq -r '[.assets[] | select(.name | endswith(".dmg"))][0].url // empty')"
-  DMG_ASSET_NAME="$(echo "$RELEASE" | jq -r '[.assets[] | select(.name | endswith(".dmg"))][0].name // empty')"
-  if [[ -z "$DMG_ASSET_URL" ]]; then
-    echo "  skip $TAG — no .dmg asset"
+  # v0.2.5+: prefer .pkg (current shape). Older releases (v0.2.0..v0.2.4)
+  # only have .dmg assets — fall back to .dmg so the appcast still surfaces
+  # them in the historical channel. Sparkle 2.x handles both transparently.
+  ASSET_URL="$(echo "$RELEASE" | jq -r '[.assets[] | select(.name | endswith(".pkg"))][0].url // empty')"
+  ASSET_NAME="$(echo "$RELEASE" | jq -r '[.assets[] | select(.name | endswith(".pkg"))][0].name // empty')"
+  if [[ -z "$ASSET_URL" ]]; then
+    ASSET_URL="$(echo "$RELEASE" | jq -r '[.assets[] | select(.name | endswith(".dmg"))][0].url // empty')"
+    ASSET_NAME="$(echo "$RELEASE" | jq -r '[.assets[] | select(.name | endswith(".dmg"))][0].name // empty')"
+  fi
+  if [[ -z "$ASSET_URL" ]]; then
+    echo "  skip $TAG — no .pkg or .dmg asset"
     continue
   fi
 
@@ -144,42 +151,45 @@ for i in $(seq 0 $((RELEASE_COUNT - 1))); do
   # an older release; without retry, one flake takes down the whole
   # appcast regen. After 3 attempts, skip this tag — next run picks it
   # up.
-  DMG_DOWNLOAD_OK=false
+  # Asset extension drives the gh-release-download glob. v0.2.0..v0.2.4
+  # are .dmg, v0.2.5+ are .pkg — the glob picks whichever is present.
+  ASSET_EXT="${ASSET_NAME##*.}"
+  DOWNLOAD_OK=false
   for attempt in 1 2 3; do
-    echo "  download $TAG (attempt $attempt) → $TAG_DIR/$DMG_ASSET_NAME"
+    echo "  download $TAG (attempt $attempt) → $TAG_DIR/$ASSET_NAME"
     if gh release download "$TAG" \
       --repo "$GITHUB_REPO" \
-      --pattern '*.dmg' \
+      --pattern "*.${ASSET_EXT}" \
       --dir "$TAG_DIR" \
       --clobber; then
-      DMG_DOWNLOAD_OK=true
+      DOWNLOAD_OK=true
       break
     fi
     echo "  attempt $attempt failed; sleeping 5s before retry"
     sleep 5
   done
 
-  if [[ "$DMG_DOWNLOAD_OK" != "true" ]]; then
+  if [[ "$DOWNLOAD_OK" != "true" ]]; then
     echo "::warning::Download failed for $TAG after 3 attempts — skipping."
     continue
   fi
 
-  DMG_LOCAL="$TAG_DIR/$DMG_ASSET_NAME"
-  if [[ ! -f "$DMG_LOCAL" ]]; then
-    echo "::warning::Download reported success but $DMG_LOCAL missing — skipping."
+  ASSET_LOCAL="$TAG_DIR/$ASSET_NAME"
+  if [[ ! -f "$ASSET_LOCAL" ]]; then
+    echo "::warning::Download reported success but $ASSET_LOCAL missing — skipping."
     continue
   fi
 
-  LENGTH="$(stat -f%z "$DMG_LOCAL")"
+  LENGTH="$(stat -f%z "$ASSET_LOCAL")"
 
-  SIGN_OUTPUT="$("$SIGN_UPDATE" -f "$TMP_KEY" "$DMG_LOCAL")"
+  SIGN_OUTPUT="$("$SIGN_UPDATE" -f "$TMP_KEY" "$ASSET_LOCAL")"
   ED_SIGNATURE="$(echo "$SIGN_OUTPUT" | sed -nE 's/.*sparkle:edSignature="([^"]+)".*/\1/p')"
   if [[ -z "$ED_SIGNATURE" ]]; then
     echo "::error::sign_update produced no signature for $TAG. Output: $SIGN_OUTPUT"
     exit 1
   fi
 
-  PUBLIC_DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/$TAG/$DMG_ASSET_NAME"
+  PUBLIC_DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/$TAG/$ASSET_NAME"
 
   PUB_DATE="$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$CREATED_AT" "+%a, %d %b %Y %H:%M:%S +0000" 2>/dev/null \
              || echo "$CREATED_AT")"

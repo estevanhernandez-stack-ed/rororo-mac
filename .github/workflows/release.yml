@@ -69,7 +69,7 @@ jobs:
           echo "SPARKLE_SIGN_UPDATE_PATH=$SIGN_UPDATE_PATH" >> "$GITHUB_ENV"
           echo "Resolved sign_update at $SIGN_UPDATE_PATH"
 
-      - name: Import Apple Developer ID certificate
+      - name: Import Apple Developer ID Application certificate
         # Hand-rolled `security create-keychain` + `security import` worked for
         # the archive step but xcodebuild's exportArchive resolves the signing
         # identity through a different code path that's keychain-search-list-
@@ -82,6 +82,20 @@ jobs:
           p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
           p12-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
 
+      - name: Import Apple Developer ID Installer certificate
+        # Second cert, distinct from Developer ID Application: signs the
+        # .pkg envelope (productbuild) so macOS Installer.app trusts the
+        # package + notarization picks up both the pkg sig and the inner
+        # .app sig. keychain-name set so import-codesign-certs reuses
+        # the existing build keychain rather than creating a fresh one
+        # (which would replace the search list and lose the App cert).
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          keychain-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          create-keychain: false
+          p12-file-base64: ${{ secrets.MACOS_INSTALLER_CERTIFICATE }}
+          p12-password: ${{ secrets.MACOS_INSTALLER_CERTIFICATE_PASSWORD }}
+
       - name: Compute build number
         # Monotonic per-commit build number used for both
         # CFBundleVersion (the bundle) and sparkle:version (the appcast).
@@ -93,20 +107,21 @@ jobs:
           echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
           echo "Computed BUILD_NUMBER=$BUILD_NUMBER"
 
-      - name: Notarize and DMG
+      - name: Notarize and PKG
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
           MACOS_CERTIFICATE_NAME: ${{ secrets.MACOS_CERTIFICATE_NAME }}
+          MACOS_INSTALLER_CERTIFICATE_NAME: ${{ secrets.MACOS_INSTALLER_CERTIFICATE_NAME }}
           # TAG_NAME + BUILD_NUMBER are inherited from the job-level env
           # and the Compute build number step. notarize.sh asserts both.
         run: bash tools/release/notarize.sh
 
-      - name: Attach DMG to GitHub Release
+      - name: Attach PKG to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: build/RORORO.dmg
+          files: build/RORORO.pkg
           fail_on_unmatched_files: true
           generate_release_notes: true
 
@@ -144,7 +159,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${TAG_NAME#v}"
-          SHA256="$(shasum -a 256 "build/RORORO.dmg" | awk '{print $1}')"
+          SHA256="$(shasum -a 256 "build/RORORO.pkg" | awk '{print $1}')"
           echo "Bumping cask to version=$VERSION sha256=$SHA256"
 
           TAP_DIR="$RUNNER_TEMP/homebrew-rororo"
@@ -159,6 +174,31 @@ jobs:
           # leading whitespace + literal quotes anchor the match precisely.
           sed -i.bak -E "s|^  version \".*\"|  version \"$VERSION\"|" Casks/rororo.rb
           sed -i.bak -E "s|^  sha256 \".*\"|  sha256 \"$SHA256\"|" Casks/rororo.rb
+
+          # v0.2.5+: cask ships .pkg, not .dmg. One-time migration —
+          # idempotent, so no-ops on every release after the first. The
+          # `app` artifact stanza becomes `pkg` + a pkgutil uninstall
+          # declaration (so `brew uninstall --cask rororo` removes the
+          # installed bundle that the .pkg dropped into /Applications).
+          sed -i.bak -E "s|/RORORO\.dmg|/RORORO.pkg|g" Casks/rororo.rb
+          if grep -q '^  app "RORORO\.app"$' Casks/rororo.rb; then
+            python3 - <<'PY'
+import re, pathlib
+p = pathlib.Path("Casks/rororo.rb")
+s = p.read_text()
+# Replace the single `  app "RORORO.app"` line with the pkg stanza
+# plus a pkgutil-based uninstaller. \n is significant — preserves the
+# blank line before `zap` for legibility.
+s = re.sub(
+    r'^  app "RORORO\.app"$',
+    '  pkg "RORORO.pkg"\n\n  uninstall pkgutil: "com.626labs.rororo-mac"',
+    s,
+    flags=re.MULTILINE,
+)
+p.write_text(s)
+PY
+            echo "Migrated cask from .dmg/app to .pkg/pkg stanza."
+          fi
           rm -f Casks/rororo.rb.bak
 
           if git diff --quiet; then

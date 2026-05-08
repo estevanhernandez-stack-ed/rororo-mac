@@ -7,12 +7,12 @@ Sparkle appcast published to gh-pages.
 ## How it works
 
 ```
-git tag v0.1.0  →  push  →  .github/workflows/release.yml triggers
+git tag v0.2.5  →  push  →  .github/workflows/release.yml triggers
                                   │
-                                  ├─ archive + sign (notarize.sh)
-                                  ├─ submit to Apple notary, staple
-                                  ├─ build + staple DMG
-                                  ├─ attach DMG to Release page
+                                  ├─ archive + sign .app (notarize.sh)
+                                  ├─ productbuild signed .pkg
+                                  ├─ submit .pkg to Apple notary, staple
+                                  ├─ attach .pkg to Release page
                                   ├─ regenerate appcast (generate-appcast.sh)
                                   └─ publish dist/ to gh-pages
                                                 │
@@ -81,10 +81,23 @@ Three things happen with those:
 If the private key is ever lost, every existing Sparkle client refuses to
 update from the new key (one-way break). Don't lose it.
 
-### 2. Apple Developer ID certificate
+### 2. Apple Developer ID certificates (two of them)
 
-In Keychain Access, find your Developer ID Application cert. Export as
-`cert.p12` (right-click → Export → set a passphrase). Then:
+We ship a signed `.pkg` installer, which needs **two** Developer ID certs:
+
+- **Developer ID Application** — signs the `.app` bundle inside the pkg.
+- **Developer ID Installer** — signs the `.pkg` envelope itself. Distinct
+  cert. macOS Installer.app and Apple's notary check both.
+
+If you don't have the Installer cert yet, generate it at
+<https://developer.apple.com/account/resources/certificates/add> →
+"Developer ID Installer" → upload a CSR (Keychain Access → Certificate
+Assistant → Request a Certificate from a Certificate Authority…) →
+download → double-click to install into Keychain.
+
+Then in Keychain Access, find each cert. Right-click → Export each as
+its own `.p12` (set a passphrase — same passphrase for both is fine).
+For each:
 
 ```bash
 base64 -i cert.p12 | pbcopy
@@ -94,9 +107,15 @@ Upload to GitHub Secrets:
 
 | Secret | Value |
 | --- | --- |
-| `MACOS_CERTIFICATE` | the base64 blob just copied to your clipboard |
-| `MACOS_CERTIFICATE_PASSWORD` | the `.p12` export passphrase you set |
-| `MACOS_CERTIFICATE_NAME` | the cert's exact name, e.g., `Developer ID Application: Estevan Hernandez (XXXXXXXXXX)` |
+| `MACOS_CERTIFICATE` | base64 blob from the **Application** p12 |
+| `MACOS_CERTIFICATE_PASSWORD` | `.p12` export passphrase (Application) |
+| `MACOS_CERTIFICATE_NAME` | cert name, e.g., `Developer ID Application: Estevan Hernandez (XXXXXXXXXX)` |
+| `MACOS_INSTALLER_CERTIFICATE` | base64 blob from the **Installer** p12 |
+| `MACOS_INSTALLER_CERTIFICATE_PASSWORD` | `.p12` export passphrase (Installer) |
+| `MACOS_INSTALLER_CERTIFICATE_NAME` | cert name, e.g., `Developer ID Installer: Estevan Hernandez (XXXXXXXXXX)` |
+
+If the two p12 passphrases match, the workflow's keychain-import step
+runs cleanly (it reuses one keychain unlock for both imports).
 
 ### 3. Apple notarization credentials
 
@@ -135,9 +154,9 @@ git push origin v0.1.0
 
 Watch GitHub Actions. Then verify:
 
-- The Release page shows the notarized DMG attached.
+- The Release page shows the notarized PKG attached.
 - `https://estevanhernandez-stack-ed.github.io/rororo-mac/appcast.xml` serves the new `<item>`.
-- A pre-existing install (`v0.0.x`) prompts for the update on next launch.
+- A pre-existing install (`v0.2.x`) prompts for the update on next launch.
 
 ## Rolling back a broken release
 
@@ -159,11 +178,14 @@ export APPLE_ID="..."
 export APPLE_TEAM_ID="..."
 export APPLE_NOTARY_PASSWORD="..."
 export MACOS_CERTIFICATE_NAME="Developer ID Application: ... (XXXXXXXXXX)"
+export MACOS_INSTALLER_CERTIFICATE_NAME="Developer ID Installer: ... (XXXXXXXXXX)"
+export TAG_NAME="v0.2.5"
+export BUILD_NUMBER="$(git rev-list --count HEAD)"
 
 bash tools/release/notarize.sh
 ```
 
-The DMG lands at `build/RORORO.dmg`. Useful for a dry-run before tagging,
+The PKG lands at `build/RORORO.pkg`. Useful for a dry-run before tagging,
 or for ad-hoc handoff to a tester.
 
 `generate-appcast.sh` additionally needs:
@@ -181,9 +203,9 @@ bash tools/release/generate-appcast.sh
 
 | Path | What it is |
 | --- | --- |
-| `notarize.sh` | Archive → export → notarize → staple → DMG → staple |
+| `notarize.sh` | Archive → sign .app → notarize .app → staple → productbuild .pkg → notarize .pkg → staple |
 | `exportOptions.plist` | `developer-id` distribution config for `xcodebuild -exportArchive` |
-| `generate-appcast.sh` | Pulls `gh release list`, signs DMG hashes, writes `dist/appcast.xml` |
+| `generate-appcast.sh` | Pulls `gh release list`, signs asset hashes (.pkg or legacy .dmg), writes `dist/appcast.xml` |
 | `README.md` | This file |
 
 The release workflow lives at `.github/workflows/release.yml`. The env
