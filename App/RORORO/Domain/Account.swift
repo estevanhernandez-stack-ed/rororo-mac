@@ -30,13 +30,14 @@ public struct Account: Codable, Equatable, Identifiable, Sendable {
     /// observed cap collapses to the last-written value. Sequential
     /// clicks (the normal flow) work cleanly.
     public var framerateCapOverride: Int?
-    /// Last-known health of the saved `.ROBLOSECURITY` cookie (Slope B3′).
+    /// Last-known health of the saved `.ROBLOSECURITY` cookie (Slope B3').
     /// nil ≡ never-probed (treated as .unknown by callers). Surfaces
     /// expiry to the row UI BEFORE the user clicks Launch As — historically
     /// expiry only manifested at launch-fail time with a generic alert.
     public var cookieStatus: CookieStatus?
     /// Wall-clock of the last cookie-health probe. Lets the UI show
     /// "checked Nm ago" if/when we add a manual refresh affordance.
+    /// Updated by AccountStore.refreshAllAccounts on every probe pass.
     public var cookieCheckedAt: Date?
 
     public var id: String { userId }

@@ -47,12 +47,13 @@ struct ROROROApp: App {
                        let updater = UpdaterHost.shared.updater {
                         checkForUpdatesViewModel = CheckForUpdatesViewModel(updater: updater)
                     }
-                    // Best-effort cookie-health probe across all saved
-                    // accounts (Slope B3′). Surfaces expiry on row UI
-                    // without waiting for the user to hit Launch As
-                    // and fail. Fully async + fail-soft per account.
+                    // Best-effort refresh across all saved accounts on
+                    // boot — cookie-health probe (Slope B3') plus
+                    // display-name + avatar refresh (Slope B2'). Async
+                    // and fail-soft per account; the row UI updates as
+                    // each account's response lands.
                     Task { @MainActor in
-                        await AccountStore.shared.refreshAllCookieStatuses()
+                        await AccountStore.shared.refreshAllAccounts()
                     }
                     NSApp.activate(ignoringOtherApps: true)
                 }

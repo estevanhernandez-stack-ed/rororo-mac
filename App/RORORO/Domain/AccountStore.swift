@@ -119,18 +119,29 @@ public final class AccountStore {
     /// users/authenticated`. Best-effort, off-main, fail-soft per
     /// account: a single probe failure (network glitch, 5xx) marks
     /// that account `.transient`; subsequent boots re-probe.
-    /// Run from `App.onAppear` so the row UI surfaces expiry as early
-    /// as possible — without the user having to attempt a launch first.
-    public func refreshAllCookieStatuses() async {
+    ///
+    /// On a healthy probe the method ALSO refreshes `displayName` and
+    /// (best-effort) `avatarThumbnailURL` from the same Roblox response
+    /// — Slope B2'. Display names + avatars drift between sessions
+    /// (Roblox lets users change displayName freely; avatars rotate);
+    /// boot-time refresh keeps the row UI honest without the user
+    /// noticing a stale label. Username stays put (it's the immutable
+    /// account handle).
+    ///
+    /// Run from `App.onAppear` so expiry + freshness signals reach
+    /// the UI as early as possible.
+    public func refreshAllAccounts() async {
         let snapshot = accounts
         for account in snapshot {
             let cookie = (try? cookie(for: account.userId)) ?? nil
             guard let cookie, !cookie.isEmpty else {
                 continue
             }
+
             let status: CookieStatus
+            var refreshedProfile: RobloxApi.UserProfile? = nil
             do {
-                _ = try await RobloxApi.getUserProfile(cookie: cookie)
+                refreshedProfile = try await RobloxApi.getUserProfile(cookie: cookie)
                 status = .healthy
             } catch RobloxApi.APIError.cookieExpired {
                 status = .expired
@@ -138,6 +149,28 @@ public final class AccountStore {
                 status = .transient
             }
             setCookieStatus(userId: account.userId, status: status)
+
+            // Healthy → also refresh the public-profile fields. The
+            // displayName from getUserProfile may differ from what we
+            // last saved; updateProfile is a no-op if values match.
+            if let refreshedProfile {
+                updateProfile(
+                    userId: account.userId,
+                    displayName: refreshedProfile.displayName
+                )
+                // Avatar refresh is a separate Roblox endpoint — best
+                // effort; soft-fails to nil. updateProfile only writes
+                // when the value is non-nil so a soft-fail leaves the
+                // existing avatar intact.
+                if let avatarURL = try? await RobloxApi.getAvatarHeadshotURL(
+                    userId: refreshedProfile.userId
+                ) {
+                    updateProfile(
+                        userId: account.userId,
+                        avatarThumbnailURL: avatarURL
+                    )
+                }
+            }
         }
     }
 
