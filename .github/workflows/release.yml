@@ -181,29 +181,25 @@ jobs:
           sed -i.bak -E "s|^  sha256 \".*\"|  sha256 \"$SHA256\"|" Casks/rororo.rb
 
           # v0.2.5+: cask ships .pkg, not .dmg. One-time migration —
-          # idempotent, so no-ops on every release after the first. The
-          # `app` artifact stanza becomes `pkg` + a pkgutil uninstall
+          # naturally idempotent (the awk match condition only fires
+          # when the `app` stanza is still present; once migrated, the
+          # file passes through unchanged on every subsequent release).
+          # The `app` artifact stanza becomes `pkg` + a pkgutil uninstall
           # declaration (so `brew uninstall --cask rororo` removes the
           # installed bundle that the .pkg dropped into /Applications).
           sed -i.bak -E "s|/RORORO\.dmg|/RORORO.pkg|g" Casks/rororo.rb
-          if grep -q '^  app "RORORO\.app"$' Casks/rororo.rb; then
-            python3 - <<'PY'
-import re, pathlib
-p = pathlib.Path("Casks/rororo.rb")
-s = p.read_text()
-# Replace the single `  app "RORORO.app"` line with the pkg stanza
-# plus a pkgutil-based uninstaller. \n is significant — preserves the
-# blank line before `zap` for legibility.
-s = re.sub(
-    r'^  app "RORORO\.app"$',
-    '  pkg "RORORO.pkg"\n\n  uninstall pkgutil: "com.626labs.rororo-mac"',
-    s,
-    flags=re.MULTILINE,
-)
-p.write_text(s)
-PY
-            echo "Migrated cask from .dmg/app to .pkg/pkg stanza."
-          fi
+          awk '
+            /^  app "RORORO\.app"$/ {
+              print "  pkg \"RORORO.pkg\""
+              print ""
+              print "  uninstall pkgutil: \"com.626labs.rororo-mac\""
+              migrated = 1
+              next
+            }
+            { print }
+            END { if (migrated) print "Migrated cask from app to pkg stanza." > "/dev/stderr" }
+          ' Casks/rororo.rb > Casks/rororo.rb.new
+          mv Casks/rororo.rb.new Casks/rororo.rb
           rm -f Casks/rororo.rb.bak
 
           if git diff --quiet; then
