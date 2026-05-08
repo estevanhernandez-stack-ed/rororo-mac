@@ -1,6 +1,6 @@
 // SettingsView.swift
-// Multi-instance toggle + default game URL + danger zone (cookie copy).
-// Persists via MultiInstanceState + FavoriteGameStore — both back to
+// Multi-instance toggle + frame-rate cap + danger zone.
+// Persists via MultiInstanceState + LaunchSettingsStore — both back to
 // UserDefaults, so settings survive app relaunch.
 
 import SwiftUI
@@ -10,6 +10,16 @@ struct SettingsView: View {
 
     @State private var multiInstanceEnabled = MultiInstanceState.shared.enabled
     @State private var dangerZoneVisible = false
+
+    @ObservedObject private var launchSettings = LaunchSettingsStore.shared
+    @State private var framerateCapEnabled: Bool
+    @State private var framerateCapValue: Int
+
+    init() {
+        let initialCap = LaunchSettingsStore.shared.framerateCap
+        _framerateCapEnabled = State(initialValue: initialCap != nil)
+        _framerateCapValue = State(initialValue: initialCap ?? 20)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
@@ -25,6 +35,42 @@ struct SettingsView: View {
                 Text(multiInstanceEnabled
                      ? "Each Launch As spawns a fresh Roblox instance via per-launch app copy + sem_unlink."
                      : "Multi-instance OFF: launches go to /Applications/Roblox.app and only one Roblox window can run at a time.")
+                    .font(Theme.Font.bodySmall)
+                    .foregroundStyle(Theme.Color.fg3)
+            }
+
+            section("Frame rate") {
+                Toggle("Throttle Roblox FPS at launch", isOn: $framerateCapEnabled)
+                    .onChange(of: framerateCapEnabled) { _, newValue in
+                        if newValue {
+                            launchSettings.setFramerateCap(framerateCapValue)
+                        } else {
+                            launchSettings.setFramerateCap(nil)
+                        }
+                    }
+                if framerateCapEnabled {
+                    HStack(spacing: Theme.Spacing.sm) {
+                        Text("Cap")
+                            .font(Theme.Font.bodySmall)
+                            .foregroundStyle(Theme.Color.fg2)
+                        Picker("Cap", selection: $framerateCapValue) {
+                            Text("20 fps").tag(20)
+                            Text("30 fps").tag(30)
+                            Text("60 fps").tag(60)
+                            Text("144 fps").tag(144)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .onChange(of: framerateCapValue) { _, newValue in
+                            if framerateCapEnabled {
+                                launchSettings.setFramerateCap(newValue)
+                            }
+                        }
+                    }
+                }
+                Text(framerateCapEnabled
+                     ? "Roblox-wide cap. Every running instance is throttled at this rate uniformly — applied at next launch. Already-running instances keep their current cap until restart."
+                     : "Default: Roblox uses its built-in 60 fps cap.")
                     .font(Theme.Font.bodySmall)
                     .foregroundStyle(Theme.Color.fg3)
             }
@@ -52,7 +98,7 @@ struct SettingsView: View {
             }
         }
         .padding(Theme.Spacing.lg)
-        .frame(minWidth: 480, minHeight: 360)
+        .frame(minWidth: 480, minHeight: 420)
         .background(Theme.Color.bgPage)
     }
 

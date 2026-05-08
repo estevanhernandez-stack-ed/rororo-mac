@@ -79,6 +79,20 @@ public final class MultiInstanceCoordinator {
             name: NSApplication.willTerminateNotification,
             object: nil
         )
+
+        // Roblox-process-termination observer. When the last Roblox
+        // instance exits, clean up the FFlag file we wrote into the
+        // bundle (ClientAppSettings.json). NOT the AppleBlox setTimeout
+        // pattern — that's a Heisenbug on cold starts (see ADR 0001).
+        // Observing on NSWorkspace's notification center because that's
+        // where app-lifecycle notifications fire; the global default
+        // center doesn't carry these.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleAppDidTerminate(_:)),
+            name: NSWorkspace.didTerminateApplicationNotification,
+            object: nil
+        )
     }
 
     /// Route an incoming `roblox-player:` URL through the multi-instance
@@ -99,9 +113,34 @@ public final class MultiInstanceCoordinator {
     }
 
     @objc nonisolated private func handleWillTerminate(_ note: Notification) {
+        // Synchronous fallback for the FFlag-cleanup path: if RORORO
+        // quits while no Roblox is running, scrub the bundle write
+        // before the process exits. The async restore below races the
+        // quit deadline; cleanup is fast (single file remove) and runs
+        // synchronously to make sure it completes.
+        if !Self.anyRobloxRunning() {
+            try? ClientSettingsWriter.cleanup()
+        }
         Task { @MainActor in
             await URLSchemeHandler.shared.restore()
         }
+    }
+
+    @objc nonisolated private func handleAppDidTerminate(_ note: Notification) {
+        // Cheap filter: any termination event triggers a "is Roblox
+        // still running" poll. Notification volume is low (one per
+        // app quit, app-side); the poll is in-process and fast.
+        guard !Self.anyRobloxRunning() else { return }
+        // No Roblox left — scrub the bundle write off the main thread
+        // so we don't tax NSWorkspace's notification thread.
+        Task.detached(priority: .background) {
+            try? ClientSettingsWriter.cleanup()
+        }
+    }
+
+    nonisolated private static func anyRobloxRunning() -> Bool {
+        NSWorkspace.shared.runningApplications
+            .contains { $0.bundleIdentifier?.hasPrefix("com.roblox") == true }
     }
 
     // MARK: - Off-main worker (no actor isolation; runs on Task.detached)
