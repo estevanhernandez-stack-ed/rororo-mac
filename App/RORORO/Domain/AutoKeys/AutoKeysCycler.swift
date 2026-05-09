@@ -29,6 +29,7 @@
 // `.userEngaged` ─▶ pause with auto-resume after `safety.config.resumeGrace`
 // (extends on continued input). `.killRequested` ─▶ hard stop.
 
+import CoreGraphics
 import Foundation
 
 public actor AutoKeysCycler {
@@ -79,7 +80,7 @@ public actor AutoKeysCycler {
         focuser: NSRunningApplicationFocuser(),
         assertion: IOPMPowerAssertion(),
         sleeper: TaskSleeper(),
-        safety: AutoKeysSafetyMonitor(tapping: NSEventTapping())
+        safety: AutoKeysSafetyMonitor.shared
     )
 
     private let poster: KeyEventPoster
@@ -95,6 +96,19 @@ public actor AutoKeysCycler {
     private var loopTask: Task<Void, Never>?
     private var safetyTask: Task<Void, Never>?
     private var stateContinuations: [UUID: AsyncStream<State>.Continuation] = [:]
+    /// Per-iteration progress callback — fires whenever the cycler
+    /// advances between targets OR posts a key, so the view-model can
+    /// show "firing W on Alice, next: Bob" without polling. Sendable
+    /// so it can be invoked from the actor's isolation.
+    ///
+    /// `currentKeyCode` is the code of the key being pressed at this
+    /// instant (or nil between steps / between iterations).
+    public typealias ProgressCallback = @Sendable (
+        _ current: String?,
+        _ next: String?,
+        _ currentKeyCode: CGKeyCode?
+    ) -> Void
+    private var progressCallback: ProgressCallback?
 
     /// Auto-resume deadline for engagement pauses. Nil iff not currently
     /// paused (or paused with `.userRequested`, which has no deadline).
@@ -149,12 +163,16 @@ public actor AutoKeysCycler {
         let pids = active.map(\.pid)
         currentPids = pids
         engagementDeadline = nil
+        let summary = active.map { "\($0.label ?? "?")[pid=\($0.pid),steps=\($0.sequence.steps.count)]" }.joined(separator: ", ")
+        NSLog("[RORORO] cycler: starting with \(active.count) target(s): \(summary), loopDelay=\(loopDelay)s")
         updateState(.running(pids: pids))
 
         // Subscribe to safety events BEFORE the loop spawns so the very
         // first engagement event we'd care about doesn't slip past us.
+        // Lifecycle (start/stop) of the monitor is owned by the
+        // view-model — it runs whenever Input Monitoring is granted, not
+        // just while we're running. We just attach a subscription here.
         if let safety {
-            await safety.start()
             let stream = await safety.observe()
             safetyTask = Task { [weak self] in
                 for await event in stream {
@@ -186,9 +204,19 @@ public actor AutoKeysCycler {
     }
 
     /// Stop the cycler — cancels loop + safety subscriptions, releases
-    /// the wake-lock, transitions to `.stopped(.userRequested)`.
-    public func stop() async {
-        await tearDown(reason: .userRequested)
+    /// the wake-lock, transitions to `.stopped(reason)`. Default reason
+    /// is `.userRequested`; the view-model passes `.userKilled` when
+    /// the kill gesture triggered the stop, so the toolbar can render
+    /// the right end-state.
+    public func stop(reason: StopReason = .userRequested) async {
+        await tearDown(reason: reason)
+    }
+
+    /// Register a progress callback. Replaces any prior callback.
+    /// View-model calls this once at init to wire its current/next
+    /// state mirroring.
+    public func setProgressCallback(_ callback: ProgressCallback?) {
+        self.progressCallback = callback
     }
 
     public func observe() -> AsyncStream<State> {
@@ -207,21 +235,30 @@ public actor AutoKeysCycler {
     private func handleSafetyEvent(_ event: EngagementEvent) async {
         switch event {
         case .userEngaged:
-            // Only meaningful while we're in a state the user can pause
-            // out of (.running or extending an existing engagement pause).
-            // Explicit user pauses (.userRequested) and stopped states
-            // ignore engagement events.
+            // Pause-on-engagement: only fires the FIRST event that
+            // transitions us from running → paused. Subsequent events
+            // while already paused do NOT extend the deadline — the
+            // user complained that any mouse movement kept the pause
+            // active forever, which made the toolbar unreachable.
+            // Non-extending pause means: 1.5s after first engagement,
+            // we auto-resume regardless of continued mouse activity.
             switch state {
-            case .running, .paused(.userEngaged, _):
+            case .running:
                 let deadline = Date().addingTimeInterval(resumeGrace)
                 engagementDeadline = deadline
                 updateState(.paused(reason: .userEngaged, until: deadline))
-            case .stopped, .paused(.userRequested, _):
+            case .stopped, .paused:
                 return
             }
 
         case .killRequested:
-            await tearDown(reason: .userKilled)
+            // No-op — kill handling moved to AutoKeysCyclerViewModel
+            // so the start (from .stopped) and stop (from .running /
+            // .paused) decisions live in one place. Two parallel
+            // handlers (cycler + view-model) caused a race where
+            // cycler tore down first → state became .stopped(.userKilled)
+            // → view-model saw .stopped → called play() → restart loop.
+            return
         }
     }
 
@@ -248,23 +285,47 @@ public actor AutoKeysCycler {
                 return
             }
 
-            for target in accounts {
+            for (idx, target) in accounts.enumerated() {
                 if Task.isCancelled { return }
                 await waitWhilePaused()
                 if Task.isCancelled { return }
                 if target.sequence.isEmpty { continue }
+                // Fire the progress callback so the toolbar can show
+                // "now: X, next: Y". next wraps to first on the last
+                // index — that's the next iteration's first target.
+                let nextIdx = (idx + 1) % accounts.count
+                let nextLabel = accounts[nextIdx].label
+                progressCallback?(target.label, nextLabel, nil)
+                NSLog("[RORORO] cycler: focusing pid=\(target.pid) (\(target.label ?? "?"))")
                 do {
                     try await focuser.focus(pid: target.pid)
                 } catch {
-                    NSLog("[RORORO] auto-keys: skipping pid=\(target.pid) (\(target.label ?? "?")): \(error)")
+                    NSLog("[RORORO] cycler: skipping pid=\(target.pid) (\(target.label ?? "?")): \(error)")
                     continue
                 }
                 for step in target.sequence.steps {
                     if Task.isCancelled { return }
-                    await poster.post(keyCode: step.keyCode)
+                    // Repeat-N support — fire the key `step.repeatCount`
+                    // times back-to-back, with a fixed 0.7 s gap between
+                    // presses (Roblox coalesces faster than that). The
+                    // long delay-after still applies once after the
+                    // last press, before moving to the next step.
+                    for repeatIdx in 0..<step.repeatCount {
+                        if Task.isCancelled { return }
+                        NSLog("[RORORO] cycler: posting keyCode=\(step.keyCode) (\(repeatIdx + 1)/\(step.repeatCount)) to pid=\(target.pid)")
+                        progressCallback?(target.label, nextLabel, step.keyCode)
+                        await poster.post(keyCode: step.keyCode)
+                        // Inter-press gap (only between presses; the
+                        // last one yields directly into delayAfter).
+                        if repeatIdx < step.repeatCount - 1 {
+                            try? await sleeper.sleep(seconds: AutoKeysStep.intraRepeatInterval)
+                        }
+                    }
                     try? await sleeper.sleep(seconds: step.delayAfter)
                 }
             }
+            // Between iterations: tell the UI we're between targets.
+            progressCallback?(nil, accounts.first?.label, nil)
 
             if Task.isCancelled { return }
             try? await sleeper.sleep(seconds: loopDelay)
@@ -312,9 +373,9 @@ public actor AutoKeysCycler {
         loopTask = nil
         safetyTask?.cancel()
         safetyTask = nil
-        if let safety {
-            await safety.stop()
-        }
+        // Don't stop the safety monitor — the view-model owns its
+        // lifecycle and keeps it running so the kill-key-as-toggle
+        // path can fire from `.stopped` to start the cycler again.
         assertion.release()
         engagementDeadline = nil
         currentPids = []

@@ -1,8 +1,11 @@
 // AutoKeysSequence.swift
-// Domain — ordered list of up to 3 `AutoKeysStep`s for one account
-// (Slope C). Per ADR 0004 Decision 2, the cap is enforced at both
-// construction and decode time so a hand-edited `accounts.json` can't
-// sneak a 4-step sequence past us.
+// Domain — ordered list of `AutoKeysStep`s for one account (Slope C).
+// No artificial step-count cap: the real ceiling is `CycleBudget.hardCap`
+// against the total cycle time across all configured accounts. ADR 0004
+// Decision 2's original 3-step cap was a UX guardrail; experience showed
+// users want longer macros (full keybind rotations, multi-step ability
+// chains). Cycle-budget enforcement on the recorder + cycler covers
+// the safety case.
 //
 // `totalDuration` is the input to `CycleBudget.estimate`; an empty
 // sequence (or nil on the Account) means the cycler skips the account.
@@ -11,45 +14,26 @@ import Foundation
 
 public struct AutoKeysSequence: Codable, Equatable, Sendable {
 
-    public static let maxSteps = 3
-
     public let steps: [AutoKeysStep]
 
-    /// Failable — returns nil when `steps.count > maxSteps`. Empty is allowed
-    /// and represents "configured but no steps" (cycler skips the account).
+    /// Always-succeeds initializer (was failable when the 3-step cap
+    /// was enforced). Kept as a failable init for source compatibility
+    /// with existing callsites; never returns nil now.
     public init?(steps: [AutoKeysStep]) {
-        guard steps.count <= Self.maxSteps else { return nil }
         self.steps = steps
     }
 
-    /// Σ(delayAfter) — one walk through the sequence. Used by `CycleBudget`.
+    /// Σ(delayAfter + intra-repeat gaps) — one walk through the
+    /// sequence. Each step contributes `delayAfter` once (after its
+    /// last press) plus `(repeatCount - 1) × intraRepeatInterval` for
+    /// the gaps between presses. Used by `CycleBudget` to size the
+    /// loop against `hardCap`.
     public var totalDuration: TimeInterval {
-        steps.reduce(0) { $0 + $1.delayAfter }
+        steps.reduce(0) { acc, step in
+            let repeats = max(0, step.repeatCount - 1)
+            return acc + step.delayAfter + Double(repeats) * AutoKeysStep.intraRepeatInterval
+        }
     }
 
     public var isEmpty: Bool { steps.isEmpty }
-
-    // MARK: - Codable (custom to enforce the cap on decode)
-
-    private enum CodingKeys: String, CodingKey {
-        case steps
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let decoded = try container.decode([AutoKeysStep].self, forKey: .steps)
-        guard decoded.count <= Self.maxSteps else {
-            throw DecodingError.dataCorruptedError(
-                forKey: .steps,
-                in: container,
-                debugDescription: "AutoKeysSequence exceeds max \(Self.maxSteps) steps (got \(decoded.count))"
-            )
-        }
-        self.steps = decoded
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(steps, forKey: .steps)
-    }
 }

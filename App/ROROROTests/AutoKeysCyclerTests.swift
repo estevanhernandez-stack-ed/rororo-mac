@@ -143,11 +143,13 @@ final class AutoKeysCyclerTests: XCTestCase {
             loopDelay: 0.001
         )
 
-        // Wait until each account has been focused at least twice and
-        // each key has been posted at least twice.
+        // Wait until at least the first 8 keystrokes (= two full
+        // iterations × 2 accounts × 2 keys each) have landed. The
+        // earlier "focused twice" condition could race the second
+        // iteration's last keystroke; counting posted events is the
+        // tighter check.
         await waitFor {
-            focuser.snapshot().filter { $0 == 100 }.count >= 2 &&
-            focuser.snapshot().filter { $0 == 200 }.count >= 2
+            poster.snapshot().count >= 8
         }
 
         await cycler.stop()
@@ -361,6 +363,12 @@ final class AutoKeysCyclerTests: XCTestCase {
             safety: safety
         )
 
+        // Wave 3c: cycler no longer manages safety lifecycle — that
+        // moved to AutoKeysCyclerViewModel. Tests that drive engagement
+        // events through a fake tapping must start the monitor
+        // explicitly before subscribing.
+        await safety.start()
+
         let seq = AutoKeysSequence(steps: [AutoKeysStep(keyCode: 49, delayAfter: 0.001)])!
         try await cycler.start(
             accounts: [.init(pid: 100, sequence: seq, label: "A")],
@@ -397,42 +405,11 @@ final class AutoKeysCyclerTests: XCTestCase {
         await cycler.stop()
     }
 
-    func testKillRequest_StopsCyclerWithUserKilled() async throws {
-        let assertion = FakePowerAssertion()
-        let tapping = FakeEventTapping()
-        let safety = AutoKeysSafetyMonitor(
-            tapping: tapping,
-            config: AutoKeysSafetyConfig(
-                killKeyCode: 80,
-                // Tight hold so the kill fires fast.
-                gesture: .holdFor(seconds: 0.05),
-                resumeGrace: 5
-            )
-        )
-        let cycler = makeCycler(assertion: assertion, safety: safety)
-
-        let seq = AutoKeysSequence(steps: [AutoKeysStep(keyCode: 49, delayAfter: 0.001)])!
-        try await cycler.start(
-            accounts: [.init(pid: 100, sequence: seq, label: "A")],
-            loopDelay: 0.01
-        )
-
-        // Trigger the kill: keyDown on the kill key, hold past the deadline.
-        tapping.send(TappedEvent(kind: .keyDown(80), timestamp: Date(), isSelfTagged: false))
-
-        // Wait for the cycler to observe the .userKilled stop.
-        await waitFor(timeout: 1.5) {
-            if case .stopped(reason: .some(AutoKeysCycler.StopReason.userKilled)) = await cycler.state {
-                return true
-            }
-            return false
-        }
-
-        let finalState = await cycler.state
-        XCTAssertEqual(finalState, AutoKeysCycler.State.stopped(reason: .userKilled))
-        XCTAssertFalse(assertion.held())
-        XCTAssertEqual(assertion.releaseCount, 1)
-    }
+    // Wave 3c removed cycler's own kill-event handling (it now no-ops
+    // on `.killRequested`; the view-model owns kill dispatch to avoid
+    // a parallel-handler restart race). The end-to-end kill test moved
+    // to view-model territory; the cycler-side test was removed since
+    // it asserted a code path that intentionally no longer exists.
 
     func testExplicitPauseResume_RoundTripsThroughRunning() async throws {
         let cycler = makeCycler()
@@ -469,6 +446,7 @@ final class AutoKeysCyclerTests: XCTestCase {
             config: .default
         )
         let cycler = makeCycler(poster: poster, assertion: assertion, safety: safety)
+        await safety.start()
 
         let seq = AutoKeysSequence(steps: [AutoKeysStep(keyCode: 49, delayAfter: 0.001)])!
         try await cycler.start(

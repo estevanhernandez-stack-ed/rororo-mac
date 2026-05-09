@@ -1,13 +1,14 @@
 // AutoKeysSequenceTests.swift
-// Domain value type — ordered list of up to 3 steps with cap enforcement
-// at construction AND decode time.
+// Domain value type — ordered list of `AutoKeysStep`. The 3-step cap
+// from the original ADR was relaxed in wave 3c; cycle-budget enforcement
+// at the recorder + cycler is the real ceiling now.
 
 import XCTest
 @testable import RORORO
 
 final class AutoKeysSequenceTests: XCTestCase {
 
-    // MARK: - Construction cap
+    // MARK: - Construction
 
     func testInit_AcceptsEmpty() {
         XCTAssertNotNil(AutoKeysSequence(steps: []))
@@ -18,14 +19,18 @@ final class AutoKeysSequenceTests: XCTestCase {
         XCTAssertNotNil(seq)
     }
 
-    func testInit_AcceptsExactlyMaxSteps() {
+    func testInit_AcceptsThreeSteps() {
         let three = (0..<3).map { _ in AutoKeysStep.spacebar() }
         XCTAssertNotNil(AutoKeysSequence(steps: three))
     }
 
-    func testInit_ReturnsNilAboveMaxSteps() {
-        let four = (0..<4).map { _ in AutoKeysStep.spacebar() }
-        XCTAssertNil(AutoKeysSequence(steps: four))
+    func testInit_AcceptsArbitraryLength() {
+        // The 3-step cap was lifted in wave 3c — long sequences are
+        // allowed; CycleBudget.hardCap is the real ceiling.
+        let twenty = (0..<20).map { _ in AutoKeysStep.spacebar(after: 0.1) }
+        let seq = AutoKeysSequence(steps: twenty)
+        XCTAssertNotNil(seq)
+        XCTAssertEqual(seq?.steps.count, 20)
     }
 
     // MARK: - totalDuration
@@ -68,19 +73,24 @@ final class AutoKeysSequenceTests: XCTestCase {
         XCTAssertEqual(original, decoded)
     }
 
-    func testDecode_RejectsExcessSteps() {
+    func testDecode_AcceptsArbitraryStepCount() throws {
+        // Decode no longer enforces a step cap — wave 3c relaxed the
+        // original 3-step ADR rule. Cycle-budget validation in the
+        // recorder gates oversized sequences from saving.
         let json = """
         { "steps": [
+            { "keyCode": 49, "delayAfter": 0 },
             { "keyCode": 49, "delayAfter": 0 },
             { "keyCode": 49, "delayAfter": 0 },
             { "keyCode": 49, "delayAfter": 0 },
             { "keyCode": 49, "delayAfter": 0 }
         ] }
         """.data(using: .utf8)!
-        XCTAssertThrowsError(try JSONDecoder().decode(AutoKeysSequence.self, from: json))
+        let seq = try JSONDecoder().decode(AutoKeysSequence.self, from: json)
+        XCTAssertEqual(seq.steps.count, 5)
     }
 
-    func testDecode_AcceptsExactlyMaxSteps() throws {
+    func testDecode_AcceptsThreeSteps() throws {
         let json = """
         { "steps": [
             { "keyCode": 49, "delayAfter": 0 },

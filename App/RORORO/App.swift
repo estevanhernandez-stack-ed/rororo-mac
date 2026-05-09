@@ -37,6 +37,12 @@ struct ROROROApp: App {
                     // Install the menu-bar tray icon. Deferred to .onAppear
                     // (never .init()) per the macRo NSEvent-monitor trap.
                     TrayController.shared.install()
+                    // Boot the floating auto-keys status panel — shows
+                    // above all apps while the cycler runs so the user
+                    // can see what's firing on which account from
+                    // inside Roblox. Self-shows/hides based on cycler
+                    // state.
+                    AutoKeysStatusPanelController.shared.start()
                     // Boot Sparkle's updater. Idempotent — second call no-ops.
                     // Reads SUFeedURL + SUPublicEDKey + scheduling defaults
                     // from Info.plist. updaterDelegate / userDriverDelegate

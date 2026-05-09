@@ -105,6 +105,38 @@ final class TrayController: NSObject {
         let avatarImage = activeAccountAvatarImage(active: activeAccount)
         statusItem?.button?.image = trayImage(color: color, avatar: avatarImage)
         toggleItem.title = "Multi-instance: \(snapshot.enabled ? "ON" : "OFF")"
+
+        // Auto-keys live status next to the icon (Slope C wave 3c).
+        // Empty when stopped — title hides automatically. Short forms
+        // so the menu bar doesn't overflow.
+        statusItem?.button?.title = autoKeysTrayTitle()
+    }
+
+    /// Compose a tight one-line auto-keys status for the menu bar
+    /// title slot. Fits next to the existing avatar+ring image without
+    /// crowding other apps' menu items.
+    private func autoKeysTrayTitle() -> String {
+        let vm = AutoKeysCyclerViewModel.shared
+        switch vm.state {
+        case .stopped:
+            return ""
+        case .running:
+            if let key = vm.currentStepKeyName, let now = vm.currentTargetLabel {
+                return " \(key)→\(now)"
+            }
+            if let now = vm.currentTargetLabel {
+                return " ▶\(now)"
+            }
+            if let next = vm.nextIterationAt {
+                let secs = max(0, Int(next.timeIntervalSinceNow))
+                return " ⧗\(secs)s"
+            }
+            return " ▶"
+        case .paused(.userEngaged, _):
+            return " ⏸"
+        case .paused(.userRequested, _):
+            return " ⏸"
+        }
     }
 
     /// Returns a cached avatar image if available; kicks off an async

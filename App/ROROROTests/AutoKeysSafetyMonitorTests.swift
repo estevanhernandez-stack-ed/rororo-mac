@@ -142,10 +142,13 @@ final class AutoKeysSafetyMonitorTests: XCTestCase {
         let now = Date()
         tapping.send(TappedEvent(kind: .keyDown(80), timestamp: now, isSelfTagged: false))
 
-        // First yield: userEngaged (kill key counts as engagement too).
-        // Second yield: killRequested after the hold deadline (~50ms).
-        let events = await collect(stream, count: 2, timeout: 1.0)
-        XCTAssertEqual(events, [.userEngaged, .killRequested])
+        // Kill-key keyDown no longer broadcasts `.userEngaged` (wave 3c
+        // bug fix — was causing a race where the first tap of a
+        // double-tap triggered an engagement pause that swallowed the
+        // second tap's kill-toggle effect). Now: only `.killRequested`
+        // fires, after the hold deadline.
+        let events = await collect(stream, count: 1, timeout: 1.0)
+        XCTAssertEqual(events, [.killRequested])
 
         await monitor.stop()
     }
@@ -168,30 +171,21 @@ final class AutoKeysSafetyMonitorTests: XCTestCase {
         try await Task.sleep(nanoseconds: 50_000_000) // 50ms
         tapping.send(TappedEvent(kind: .keyUp(80), timestamp: Date(), isSelfTagged: false))
 
-        // Wait past the hold deadline; if the kill ever fires, it'd land
-        // by now. We poll the stream for a 600ms window expecting only
-        // the initial userEngaged.
-        var iterator = stream.makeAsyncIterator()
-        let first = await iterator.next()
-        XCTAssertEqual(first, .userEngaged)
-
-        // Race the deadline + a buffer. If killRequested arrives, it's
-        // a bug — the keyUp should have cancelled the hold timer.
+        // Wave 3c: kill-key keyDown no longer fires `.userEngaged`,
+        // so we never expect any output from this gesture — keyUp
+        // before the hold deadline cancels the hold timer cleanly.
+        // Race the deadline + a buffer; if killRequested arrives, the
+        // cancel didn't take.
         let waitDeadline = Date().addingTimeInterval(0.7)
-        var sawKill = false
         while Date() < waitDeadline {
-            // A quick non-blocking peek isn't possible on AsyncStream;
-            // sleep then check via a follow-up event we send.
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
-        // Fire a tag to flush any pending events.
+        // Send a mouseMoved as a sentinel; the next event yielded
+        // must be that sentinel, not a stray kill.
         tapping.send(TappedEvent(kind: .mouseMoved, timestamp: Date(), isSelfTagged: false))
-        if let next = await iterator.next() {
-            if next == .killRequested {
-                sawKill = true
-            }
-        }
-        XCTAssertFalse(sawKill, "killRequested fired despite early release")
+        var iterator = stream.makeAsyncIterator()
+        let first = await iterator.next()
+        XCTAssertEqual(first, .userEngaged, "Sentinel mouseMoved should be the first event since kill-key was released early.")
 
         await monitor.stop()
     }
@@ -213,9 +207,10 @@ final class AutoKeysSafetyMonitorTests: XCTestCase {
         tapping.send(TappedEvent(kind: .keyDown(80), timestamp: t0, isSelfTagged: false))
         tapping.send(TappedEvent(kind: .keyDown(80), timestamp: t0.addingTimeInterval(0.2), isSelfTagged: false))
 
-        // Each keyDown emits .userEngaged; the second also fires .killRequested.
-        let events = await collect(stream, count: 3, timeout: 1.0)
-        XCTAssertEqual(events, [.userEngaged, .userEngaged, .killRequested])
+        // Wave 3c: kill-key keyDowns don't fire `.userEngaged`. The
+        // second tap completes the double-tap → only `.killRequested`.
+        let events = await collect(stream, count: 1, timeout: 1.0)
+        XCTAssertEqual(events, [.killRequested])
 
         await monitor.stop()
     }
@@ -238,12 +233,15 @@ final class AutoKeysSafetyMonitorTests: XCTestCase {
         // Second tap arrives 200ms later — outside the 100ms window.
         tapping.send(TappedEvent(kind: .keyDown(80), timestamp: t0.addingTimeInterval(0.2), isSelfTagged: false))
 
-        // Two userEngaged events, no kill.
+        // Wave 3c: kill-key keyDowns no longer fire `.userEngaged`,
+        // and the second tap is outside the double-tap window so no
+        // `.killRequested` either. Send a sentinel and verify nothing
+        // fired before it.
+        try await Task.sleep(nanoseconds: 200_000_000)
+        tapping.send(TappedEvent(kind: .mouseMoved, timestamp: Date(), isSelfTagged: false))
         var iterator = stream.makeAsyncIterator()
         let first = await iterator.next()
-        let second = await iterator.next()
-        XCTAssertEqual(first, .userEngaged)
-        XCTAssertEqual(second, .userEngaged)
+        XCTAssertEqual(first, .userEngaged, "Only the sentinel mouseMoved should appear; the kill-key taps should have produced nothing.")
 
         await monitor.stop()
     }

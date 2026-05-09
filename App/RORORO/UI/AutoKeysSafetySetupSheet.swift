@@ -14,6 +14,7 @@ struct AutoKeysSafetySetupSheet: View {
     @Binding var isPresented: Bool
 
     @State private var capturedKeyCode: CGKeyCode = AutoKeysSafetyConfig.defaultKillKeyCode
+    @State private var capturedModifiers: UInt = 0
     @State private var capturing: Bool = false
     @State private var gesture: KillGesture = .defaultHold
     @State private var resumeGrace: TimeInterval = 5
@@ -49,7 +50,8 @@ struct AutoKeysSafetySetupSheet: View {
         .onAppear {
             // Hydrate from existing config on re-entry.
             let existing = settings.autoKeysSafety
-            capturedKeyCode = existing.killKeyCode
+            capturedKeyCode = existing.killKey.keyCode
+            capturedModifiers = existing.killKey.modifiers
             gesture = existing.gesture
             resumeGrace = existing.resumeGrace
             refreshPermissions()
@@ -60,10 +62,10 @@ struct AutoKeysSafetySetupSheet: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-            Text("Auto-keys safety setup")
+            Text("Hotkey setup")
                 .font(Theme.Font.heading2)
                 .foregroundStyle(Theme.Color.fg1)
-            Text("Pick how to stop the cycler if it goes off the rails. Required before Play.")
+            Text("Pick the global hotkey that starts the cycler when stopped, stops it when running, and pauses it when you grab the mouse. Required before Play.")
                 .font(Theme.Font.bodySmall)
                 .foregroundStyle(Theme.Color.fg2)
         }
@@ -78,7 +80,7 @@ struct AutoKeysSafetySetupSheet: View {
                 .tracking(0.7)
 
             HStack(spacing: Theme.Spacing.md) {
-                Text(prettyKeyName(capturedKeyCode))
+                Text(prettyKeyCombo(keyCode: capturedKeyCode, modifiers: capturedModifiers))
                     .font(Theme.Font.mono)
                     .foregroundStyle(Theme.Color.fg1)
                     .padding(.horizontal, Theme.Spacing.md)
@@ -89,15 +91,15 @@ struct AutoKeysSafetySetupSheet: View {
                 Button(capturing ? "Press a key…" : "Change") {
                     capturing.toggle()
                 }
-                .disabled(capturing && false)
                 .keyboardShortcut(.defaultAction)
-                .background(KeyCaptureRepresentable(capturing: $capturing) { code in
+                .background(KeyCaptureRepresentable(capturing: $capturing) { code, mods in
                     capturedKeyCode = code
+                    capturedModifiers = mods
                     capturing = false
                 })
             }
 
-            Text("Pick a key NOT bound in your Roblox keybinds (function keys F13–F19 are safest). Pressing it twice / holding it stops the cycler from anywhere on your Mac.")
+            Text("Pick a key NOT bound in your Roblox keybinds (function keys F13–F19 are safest). Hold Shift / Control / Option / Command while you press to record a combo (e.g. ⇧F19). Pressing the combo twice / holding it stops the cycler from anywhere on your Mac.")
                 .font(Theme.Font.bodySmall)
                 .foregroundStyle(Theme.Color.fg3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -106,7 +108,7 @@ struct AutoKeysSafetySetupSheet: View {
 
     private var gestureSection: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-            Text("Stop gesture")
+            Text("Start / stop macro")
                 .font(Theme.Font.bodySmall)
                 .foregroundStyle(Theme.Color.fg2)
                 .textCase(.uppercase)
@@ -237,7 +239,10 @@ struct AutoKeysSafetySetupSheet: View {
     private func save() {
         settings.setAutoKeysSafety(
             AutoKeysSafetyConfig(
-                killKeyCode: capturedKeyCode,
+                killKey: KillKeyCombo(
+                    keyCode: capturedKeyCode,
+                    modifiers: capturedModifiers
+                ),
                 gesture: gesture,
                 resumeGrace: resumeGrace
             )
@@ -246,17 +251,28 @@ struct AutoKeysSafetySetupSheet: View {
         // toolbar's Play button stops gating on the setup sheet from
         // here on. Re-runnable from Settings to change either field.
         UserDefaults.standard.set(true, forKey: "rororo.autoKeys.safety.configured")
+        // Push the new config to the running safety monitor so the
+        // kill key change takes effect immediately (no app restart, no
+        // cycler restart).
+        AutoKeysCyclerViewModel.shared.refreshSafetyConfig()
+        // If Input Monitoring was just granted in the permissions
+        // section above, boot the monitor now so the kill-key-as-toggle
+        // path is live without waiting for a Play click.
+        AutoKeysCyclerViewModel.shared.bootSafetyIfPermitted()
     }
 }
 
 /// AppKit shim for one-shot keyDown capture while the sheet is frontmost.
 /// SwiftUI's `.onKeyPress` is iOS 17+/macOS 14+ but doesn't capture
 /// modifier-free function-key presses cleanly — NSEvent local monitor
-/// is the load-bearing path. Lifted from the recorder sheet pattern.
+/// is the load-bearing path. The handler receives both the keyCode and
+/// the modifier bitmask masked to the relevant Shift/Control/Option/
+/// Command bits, so callers can record composite kill-key gestures
+/// like Shift+F19.
 struct KeyCaptureRepresentable: NSViewRepresentable {
 
     @Binding var capturing: Bool
-    let onKey: (CGKeyCode) -> Void
+    let onKey: (CGKeyCode, UInt) -> Void
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
@@ -265,8 +281,8 @@ struct KeyCaptureRepresentable: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         if capturing && context.coordinator.monitor == nil {
-            context.coordinator.install { code in
-                onKey(code)
+            context.coordinator.install { code, mods in
+                onKey(code, mods)
             }
         } else if !capturing && context.coordinator.monitor != nil {
             context.coordinator.uninstall()
@@ -281,10 +297,11 @@ struct KeyCaptureRepresentable: NSViewRepresentable {
 
     final class Coordinator {
         var monitor: Any?
-        func install(handler: @escaping (CGKeyCode) -> Void) {
+        func install(handler: @escaping (CGKeyCode, UInt) -> Void) {
             uninstall()
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-                handler(CGKeyCode(event.keyCode))
+                let mods = event.modifierFlags.rawValue & KillKeyCombo.relevantModifierMask
+                handler(CGKeyCode(event.keyCode), mods)
                 return nil // swallow — sheet's text fields shouldn't see it
             }
         }
@@ -294,18 +311,96 @@ struct KeyCaptureRepresentable: NSViewRepresentable {
     }
 }
 
-/// Map a CGKeyCode → human-readable name for the recorder UI. Covers
-/// the subset most users will encounter (function row, common letters,
-/// space, return, modifiers); falls back to "key #N" for the rest.
-/// Layout-independent — keyCodes are physical-position regardless of
-/// the user's active keyboard layout.
+/// Pretty-print a key + modifiers combo — "⇧F19", "⌃⌥P", or just the
+/// bare key name when no modifiers are held. Modifier order follows
+/// Apple's convention (⌃⌥⇧⌘). Falls back through `prettyKeyName` for
+/// the key portion.
+func prettyKeyCombo(keyCode: CGKeyCode, modifiers: UInt) -> String {
+    var prefix = ""
+    if (modifiers & (1 << 18)) != 0 { prefix += "⌃" }  // Control
+    if (modifiers & (1 << 19)) != 0 { prefix += "⌥" }  // Option
+    if (modifiers & (1 << 17)) != 0 { prefix += "⇧" }  // Shift
+    if (modifiers & (1 << 20)) != 0 { prefix += "⌘" }  // Command
+    return prefix + prettyKeyName(keyCode)
+}
+
+/// Map a CGKeyCode → human-readable name for the recorder UI. macOS
+/// virtual keyCodes are physical-position constants — they don't shift
+/// with the active keyboard layout, so this lookup is layout-independent
+/// (a Dvorak user pressing the physical "Q" position still gets keyCode
+/// 12). Falls back to "key #N" for keys outside this table (numpad
+/// arithmetic, IME-only keys, etc.).
 func prettyKeyName(_ code: CGKeyCode) -> String {
     switch code {
-    case 49: return "Space"
-    case 36: return "Return"
-    case 53: return "Escape"
-    case 51: return "Delete"
-    case 48: return "Tab"
+    // Letters (US-QWERTY physical layout).
+    case 0:   return "A"
+    case 1:   return "S"
+    case 2:   return "D"
+    case 3:   return "F"
+    case 4:   return "H"
+    case 5:   return "G"
+    case 6:   return "Z"
+    case 7:   return "X"
+    case 8:   return "C"
+    case 9:   return "V"
+    case 11:  return "B"
+    case 12:  return "Q"
+    case 13:  return "W"
+    case 14:  return "E"
+    case 15:  return "R"
+    case 16:  return "Y"
+    case 17:  return "T"
+    case 31:  return "O"
+    case 32:  return "U"
+    case 34:  return "I"
+    case 35:  return "P"
+    case 37:  return "L"
+    case 38:  return "J"
+    case 40:  return "K"
+    case 45:  return "N"
+    case 46:  return "M"
+    // Number row.
+    case 18:  return "1"
+    case 19:  return "2"
+    case 20:  return "3"
+    case 21:  return "4"
+    case 22:  return "6"
+    case 23:  return "5"
+    case 25:  return "9"
+    case 26:  return "7"
+    case 28:  return "8"
+    case 29:  return "0"
+    // Punctuation that survives most layouts.
+    case 24:  return "="
+    case 27:  return "-"
+    case 30:  return "]"
+    case 33:  return "["
+    case 39:  return "'"
+    case 41:  return ";"
+    case 42:  return "\\"
+    case 43:  return ","
+    case 44:  return "/"
+    case 47:  return "."
+    case 50:  return "`"
+    // Whitespace + control.
+    case 36:  return "Return"
+    case 48:  return "Tab"
+    case 49:  return "Space"
+    case 51:  return "Delete"
+    case 53:  return "Escape"
+    case 76:  return "Numpad Enter"
+    case 117: return "Forward Delete"
+    case 114: return "Help"
+    case 115: return "Home"
+    case 116: return "Page Up"
+    case 119: return "End"
+    case 121: return "Page Down"
+    // Arrows.
+    case 123: return "←"
+    case 124: return "→"
+    case 125: return "↓"
+    case 126: return "↑"
+    // Function row.
     case 122: return "F1"
     case 120: return "F2"
     case 99:  return "F3"
@@ -325,14 +420,18 @@ func prettyKeyName(_ code: CGKeyCode) -> String {
     case 64:  return "F17"
     case 79:  return "F18"
     case 80:  return "F19"
-    case 0:   return "A"
-    case 1:   return "S"
-    case 2:   return "D"
-    case 13:  return "W"
-    case 12:  return "Q"
-    case 14:  return "E"
-    case 15:  return "R"
-    case 17:  return "T"
+    case 90:  return "F20"
+    // Numpad digits.
+    case 82:  return "Numpad 0"
+    case 83:  return "Numpad 1"
+    case 84:  return "Numpad 2"
+    case 85:  return "Numpad 3"
+    case 86:  return "Numpad 4"
+    case 87:  return "Numpad 5"
+    case 88:  return "Numpad 6"
+    case 89:  return "Numpad 7"
+    case 91:  return "Numpad 8"
+    case 92:  return "Numpad 9"
     default:  return "key #\(code)"
     }
 }

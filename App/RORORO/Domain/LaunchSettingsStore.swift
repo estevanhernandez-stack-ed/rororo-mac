@@ -38,8 +38,25 @@ public final class LaunchSettingsStore: ObservableObject {
     /// F19 + hold-1s + 5s grace; the recorder lets the user record any
     /// other key and toggle hold/double-tap during setup.
     @Published public private(set) var autoKeysSafety: AutoKeysSafetyConfig
+    /// When true, the cycler synthesizes `[spacebar, 1s]` for each
+    /// running account at runtime and uses `stayAwakeLoopDelay` (30 s)
+    /// instead of `autoKeysLoopDelay`. Saved per-account `autoKeys`
+    /// values are NOT touched — toggling this off restores everyone to
+    /// their custom macros immediately. Mode, not destructive preset.
+    @Published public private(set) var autoKeysStayAwakeMode: Bool
 
-    public static let defaultAutoKeysLoopDelay: TimeInterval = 14 * 60
+    /// Default cycle pacing — 0 means "as soon as the cycle finishes
+    /// the last account, start back at the first." That's the natural
+    /// fit for active-macro use (firing keybinds repeatedly while AFK).
+    public static let defaultAutoKeysLoopDelay: TimeInterval = 0
+    /// Loop delay used when stay-awake mode is active. 30 s gives the
+    /// user a clear visual rhythm — burst through the windows, pause
+    /// long enough to come back, repeat.
+    public static let stayAwakeLoopDelay: TimeInterval = 30
+    /// Time the cycler holds focus on each window in stay-awake mode
+    /// before advancing to the next. 1 s is long enough to actually
+    /// see the window flip and the avatar jump.
+    public static let stayAwakeStepDelay: TimeInterval = 1.0
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -62,6 +79,7 @@ public final class LaunchSettingsStore: ObservableObject {
         } else {
             self.autoKeysSafety = .default
         }
+        self.autoKeysStayAwakeMode = defaults.bool(forKey: Keys.autoKeysStayAwakeMode)
     }
 
     public func setFramerateCap(_ value: Int?) {
@@ -82,15 +100,25 @@ public final class LaunchSettingsStore: ObservableObject {
         }
     }
 
-    /// Set the cycler loop delay (Slope C). Clamped to a sane range —
-    /// Roblox's AFK timer wants ≤ 18 min per window (`CycleBudget.warnThreshold`),
-    /// and a delay of 0 still works (the cycler treats it as back-to-back
-    /// passes). The minimum 30 s prevents a user from accidentally
-    /// pegging a CPU on a tight loop.
+    /// Set the cycler loop delay (Slope C). Clamped to a sane upper
+    /// bound (`CycleBudget.hardCap` — past that, the first account's
+    /// AFK timer would fire before the cycle returns). Lower bound is
+    /// 0 — the cycler treats that as back-to-back iterations, which
+    /// is the natural fit for active-macro use. Stay-awake-only mode
+    /// is the case where you'd want a non-zero delay (e.g.
+    /// `LaunchSettingsStore.stayAwakeLoopDelay = 14 * 60`).
     public func setAutoKeysLoopDelay(_ value: TimeInterval) {
-        let clamped = max(30, min(value, CycleBudget.hardCap))
+        let clamped = max(0, min(value, CycleBudget.hardCap))
         autoKeysLoopDelay = clamped
         defaults.set(clamped, forKey: Keys.autoKeysLoopDelay)
+    }
+
+    /// Toggle stay-awake mode. Non-destructive — flipping the flag
+    /// changes how the cycler synthesizes targets at runtime; saved
+    /// per-account macros remain on disk untouched.
+    public func setAutoKeysStayAwakeMode(_ on: Bool) {
+        autoKeysStayAwakeMode = on
+        defaults.set(on, forKey: Keys.autoKeysStayAwakeMode)
     }
 
     /// Persist the safety config (Slope C, ADR 0004 Decision 9). The
@@ -119,6 +147,7 @@ public final class LaunchSettingsStore: ObservableObject {
         static let fflags = "rororo.launch.fflags"
         static let autoKeysLoopDelay = "rororo.autoKeys.loopDelay"
         static let autoKeysSafety = "rororo.autoKeys.safety"
+        static let autoKeysStayAwakeMode = "rororo.autoKeys.stayAwakeMode"
     }
 }
 

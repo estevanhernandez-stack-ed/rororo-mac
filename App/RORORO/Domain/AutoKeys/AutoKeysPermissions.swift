@@ -13,6 +13,7 @@
 // can grant both without navigating Settings manually.
 
 import AppKit
+import ApplicationServices
 import CoreGraphics
 import Foundation
 import IOKit.hid
@@ -53,17 +54,33 @@ public enum AutoKeysPermissions {
         IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
     }
 
-    /// Open System Settings directly to the Accessibility pane. The
-    /// user-facing copy in the recorder uses this when status is
-    /// `.denied` (already shown — settings is the way back).
+    /// Request Accessibility — mirrors macRo's
+    /// `Permissions.requestAccessibility()` pattern:
+    ///
+    ///   1. `AXIsProcessTrustedWithOptions` fires the native prompt
+    ///      ("Allow RORORO to control your computer?") on first call.
+    ///      No-op once granted/denied.
+    ///   2. Open Settings directly to the Accessibility pane via the
+    ///      `Privacy_Accessibility` anchor on
+    ///      `com.apple.preference.security`. macRo's same URL works on
+    ///      macOS 14+ — earlier "blank pane" + "lands on General"
+    ///      reports we hit were sequencing artifacts (Settings already
+    ///      open elsewhere). The combination of native prompt + URL
+    ///      navigation is the resilient pattern.
     public static func openAccessibilitySettings() {
+        let options: [String: Bool] = ["AXTrustedCheckOptionPrompt": true]
+        _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }
     }
 
-    /// Open System Settings to the Input Monitoring pane.
+    /// Request Input Monitoring — same shape as the Accessibility flow.
+    /// `IOHIDRequestAccess` fires the native prompt; the URL navigates
+    /// Settings to the Input Monitoring pane via the `Privacy_ListenEvent`
+    /// anchor.
     public static func openInputMonitoringSettings() {
+        IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") {
             NSWorkspace.shared.open(url)
         }

@@ -24,6 +24,17 @@ struct AutoKeysRecorderSheet: View {
     @State private var pendingKeyCode: CGKeyCode? = nil
     @State private var pendingDelaySeconds: Double = 2.0
     @State private var pendingDelayUnit: DelayUnit = .seconds
+    /// Pending repeat count for the in-flight step. Default 1; user
+    /// bumps via stepper for spammable keybinds. Capped at
+    /// `AutoKeysStep.maxRepeatCount` (20).
+    @State private var pendingRepeatCount: Int = 1
+    /// Mirror of the global `LaunchSettingsStore.autoKeysLoopDelay`,
+    /// surfaced here so the user sees + sets it alongside the per-step
+    /// delays. It IS global (one cycle has one inter-iteration pause),
+    /// but the user's mental model puts it next to step delays —
+    /// last-writer-wins across recorders.
+    @State private var loopDelayValue: Double = 0
+    @State private var loopDelayUnit: DelayUnit = .seconds
 
     private enum DelayUnit: String, CaseIterable, Identifiable {
         case seconds, minutes
@@ -44,6 +55,10 @@ struct AutoKeysRecorderSheet: View {
 
             captureSection
 
+            divider
+
+            loopDelaySection
+
             Spacer(minLength: 0)
 
             cyclePreview
@@ -57,6 +72,16 @@ struct AutoKeysRecorderSheet: View {
             if let existing = account.autoKeys {
                 draftSteps = existing.steps
             }
+            // Hydrate the loop-delay control from the global setting.
+            // Show in minutes if the value is ≥ 60s, else seconds.
+            let current = settings.autoKeysLoopDelay
+            if current >= 60 {
+                loopDelayValue = current / 60
+                loopDelayUnit = .minutes
+            } else {
+                loopDelayValue = current
+                loopDelayUnit = .seconds
+            }
         }
     }
 
@@ -67,7 +92,7 @@ struct AutoKeysRecorderSheet: View {
             Text("Auto-keys for \(account.displayName)")
                 .font(Theme.Font.heading2)
                 .foregroundStyle(Theme.Color.fg1)
-            Text("Up to 3 keys. Each fires in order, with the delay you set before the cycler moves on.")
+            Text("Add as many keys as you want. Each fires in order with the delay you set before the cycler moves on. Cycle-budget gauge below is the real ceiling.")
                 .font(Theme.Font.bodySmall)
                 .foregroundStyle(Theme.Color.fg2)
         }
@@ -75,7 +100,7 @@ struct AutoKeysRecorderSheet: View {
 
     private var stepsList: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-            Text("Sequence (\(draftSteps.count) of \(AutoKeysSequence.maxSteps))")
+            Text("Sequence (\(draftSteps.count) step\(draftSteps.count == 1 ? "" : "s"))")
                 .font(Theme.Font.bodySmall)
                 .foregroundStyle(Theme.Color.fg2)
                 .textCase(.uppercase)
@@ -92,7 +117,7 @@ struct AutoKeysRecorderSheet: View {
                             .font(Theme.Font.mono)
                             .foregroundStyle(Theme.Color.fg3)
                             .frame(width: 22, alignment: .leading)
-                        Text(prettyKeyName(step.keyCode))
+                        Text(stepKeyLabel(step))
                             .font(Theme.Font.mono)
                             .foregroundStyle(Theme.Color.fg1)
                             .padding(.horizontal, Theme.Spacing.md)
@@ -116,11 +141,7 @@ struct AutoKeysRecorderSheet: View {
 
     private var captureSection: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-            if draftSteps.count >= AutoKeysSequence.maxSteps {
-                Text("Max 3 steps reached. Remove one to add another.")
-                    .font(Theme.Font.bodySmall)
-                    .foregroundStyle(Theme.Color.fg3)
-            } else if let captured = pendingKeyCode {
+            if let captured = pendingKeyCode {
                 HStack(spacing: Theme.Spacing.md) {
                     Text("Captured:")
                         .font(Theme.Font.bodySmall)
@@ -139,6 +160,24 @@ struct AutoKeysRecorderSheet: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(Theme.Color.fg3)
+                }
+
+                HStack(spacing: Theme.Spacing.md) {
+                    Text("Repeat:")
+                        .font(Theme.Font.bodySmall)
+                        .foregroundStyle(Theme.Color.fg2)
+                    Stepper(value: $pendingRepeatCount, in: 1...AutoKeysStep.maxRepeatCount) {
+                        Text(pendingRepeatCount == 1 ? "1×" : "\(pendingRepeatCount)×")
+                            .font(Theme.Font.mono)
+                            .foregroundStyle(Theme.Color.fg1)
+                            .frame(minWidth: 36, alignment: .leading)
+                    }
+                    Text(pendingRepeatCount > 1
+                         ? "(0.7s between presses)"
+                         : "")
+                        .font(Theme.Font.monoMicro)
+                        .foregroundStyle(Theme.Color.fg3)
+                    Spacer()
                 }
 
                 HStack(spacing: Theme.Spacing.md) {
@@ -167,11 +206,51 @@ struct AutoKeysRecorderSheet: View {
                     capturingKey = true
                 }
                 .buttonStyle(.borderedProminent)
-                .background(KeyCaptureRepresentable(capturing: $capturingKey) { code in
+                .background(KeyCaptureRepresentable(capturing: $capturingKey) { code, _ in
+                    // Per-account sequence stores bare keyCode only —
+                    // modifiers are a kill-key concern (ADR 0004
+                    // Decision 9). If a user holds Shift while pressing
+                    // P, we record keyCode 35 ("P") and let the engine
+                    // fire it without modifiers when cycling.
                     pendingKeyCode = code
                     capturingKey = false
                 })
             }
+        }
+    }
+
+    /// Per-recording surface for the global cycle's "wait this long after
+    /// the last step before starting the next iteration" delay. The
+    /// underlying value is global (one cycle = one inter-iteration
+    /// pause) — last writer wins across recorders. Shown here next to
+    /// the per-step delays because that's where it lives in the user's
+    /// mental model: "step 1 wait, step 2 wait, …, then loop wait."
+    private var loopDelaySection: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            Text("Repeat cycle after last step")
+                .font(Theme.Font.bodySmall)
+                .foregroundStyle(Theme.Color.fg2)
+                .textCase(.uppercase)
+                .tracking(0.7)
+
+            HStack(spacing: Theme.Spacing.md) {
+                TextField("Delay", value: $loopDelayValue, format: .number)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 80)
+                Picker("", selection: $loopDelayUnit) {
+                    ForEach(DelayUnit.allCases) { unit in
+                        Text(unit.label).tag(unit)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 110)
+                Spacer()
+            }
+
+            Text("After the cycler walks every account's sequence, it waits this long before returning to the first account. Set to 0 for back-to-back loops.")
+                .font(Theme.Font.bodySmall)
+                .foregroundStyle(Theme.Color.fg3)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -197,20 +276,42 @@ struct AutoKeysRecorderSheet: View {
     }
 
     private var footer: some View {
-        HStack {
-            Button("Cancel") { isPresented = false }
-            if !draftSteps.isEmpty {
-                Button("Clear sequence", role: .destructive) {
-                    draftSteps = []
+        VStack(spacing: Theme.Spacing.sm) {
+            // Per-recording affordance: copy this account's draft to
+            // every other saved account. Stays here because it's about
+            // the current draft. The stay-awake preset (which is a
+            // GLOBAL operation that overwrites every account) lives in
+            // Safety Setup, not here.
+            if AccountStore.shared.accounts.count > 1 {
+                HStack(spacing: Theme.Spacing.sm) {
+                    Button {
+                        applyToAllAccounts()
+                        isPresented = false
+                    } label: {
+                        Label("Save + apply to all accounts", systemImage: "square.on.square")
+                    }
+                    .disabled(saveDisabled || draftSteps.isEmpty)
+                    .help("Save the current sequence and copy it to every other saved account. Useful when all your accounts share the same Roblox keybinds.")
+
+                    Spacer()
                 }
             }
-            Spacer()
-            Button("Save") {
-                save()
-                isPresented = false
+
+            HStack {
+                Button("Cancel") { isPresented = false }
+                if !draftSteps.isEmpty {
+                    Button("Clear sequence", role: .destructive) {
+                        draftSteps = []
+                    }
+                }
+                Spacer()
+                Button("Save") {
+                    save()
+                    isPresented = false
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(saveDisabled)
             }
-            .keyboardShortcut(.defaultAction)
-            .disabled(saveDisabled)
         }
     }
 
@@ -232,28 +333,43 @@ struct AutoKeysRecorderSheet: View {
     }
 
     /// Build a snapshot for the preview: every other configured account
-    /// PLUS the in-flight draft for this account.
+    /// PLUS the in-flight draft for this account. Uses the in-flight
+    /// loop-delay value (not the persisted one) so the preview reflects
+    /// what the user is editing right now.
     private var previewEstimate: TimeInterval {
         let others = AccountStore.shared.accounts
             .filter { $0.userId != account.userId }
             .compactMap { $0.autoKeys }
         let draft = AutoKeysSequence(steps: draftSteps) ?? AutoKeysSequence(steps: [])!
+        let inFlightLoopDelay = loopDelayValue * loopDelayUnit.multiplier
         return CycleBudget.estimate(
             snapshot: others + [draft],
-            loopDelay: settings.autoKeysLoopDelay
+            loopDelay: inFlightLoopDelay
         )
     }
 
     private func commitStep() {
         guard let code = pendingKeyCode else { return }
         let seconds = pendingDelaySeconds * pendingDelayUnit.multiplier
-        draftSteps.append(AutoKeysStep(keyCode: code, delayAfter: seconds))
+        draftSteps.append(AutoKeysStep(
+            keyCode: code,
+            delayAfter: seconds,
+            repeatCount: pendingRepeatCount
+        ))
         pendingKeyCode = nil
         pendingDelaySeconds = 2
         pendingDelayUnit = .seconds
+        pendingRepeatCount = 1
     }
 
     private func save() {
+        // Auto-commit a pending capture. If the user filled out the
+        // delay field but didn't click "Add step" before hitting Save,
+        // their intent was clearly to keep that step — committing it
+        // before save matches what they meant.
+        if pendingKeyCode != nil {
+            commitStep()
+        }
         let sequence: AutoKeysSequence?
         if draftSteps.isEmpty {
             sequence = nil
@@ -261,6 +377,21 @@ struct AutoKeysRecorderSheet: View {
             sequence = AutoKeysSequence(steps: draftSteps)
         }
         store.setAutoKeys(userId: account.userId, sequence: sequence)
+        // Persist the in-flight loop-delay too. Global setting, so
+        // last-writer-wins across recorders.
+        let loopDelaySeconds = loopDelayValue * loopDelayUnit.multiplier
+        settings.setAutoKeysLoopDelay(loopDelaySeconds)
+    }
+
+    /// Save the draft to this account, then copy the same sequence to
+    /// every other saved account. Use when all accounts share the same
+    /// Roblox keybinds (the user's stated common case).
+    private func applyToAllAccounts() {
+        save()
+        let sequence = AutoKeysSequence(steps: draftSteps)
+        for other in store.accounts where other.userId != account.userId {
+            store.setAutoKeys(userId: other.userId, sequence: sequence)
+        }
     }
 
     private func stateColor(_ s: CycleBudget.State) -> Color {
@@ -269,6 +400,11 @@ struct AutoKeysRecorderSheet: View {
         case .warn:    return Theme.Color.stateWarn
         case .overCap: return Theme.Color.stateDanger
         }
+    }
+
+    private func stepKeyLabel(_ step: AutoKeysStep) -> String {
+        let name = prettyKeyName(step.keyCode)
+        return step.repeatCount > 1 ? "\(name) ×\(step.repeatCount)" : name
     }
 
     private func formatDelay(_ seconds: TimeInterval) -> String {

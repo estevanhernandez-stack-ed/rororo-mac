@@ -86,9 +86,12 @@ final class LaunchSettingsStoreTests: XCTestCase {
 
     // MARK: - autoKeysLoopDelay (Slope C)
 
-    func testAutoKeysLoopDelay_DefaultsTo14Min() {
+    func testAutoKeysLoopDelay_DefaultsToZero() {
+        // Wave 3c — default is 0 (back-to-back iterations) for active-
+        // macro use. Stay-awake-only mode opts in to 14 min via the
+        // recorder preset.
         let store = LaunchSettingsStore(defaults: defaults)
-        XCTAssertEqual(store.autoKeysLoopDelay, 14 * 60, accuracy: 0.001)
+        XCTAssertEqual(store.autoKeysLoopDelay, 0, accuracy: 0.001)
     }
 
     func testAutoKeysLoopDelay_PersistsAcrossInstances() {
@@ -99,11 +102,18 @@ final class LaunchSettingsStoreTests: XCTestCase {
         XCTAssertEqual(reborn.autoKeysLoopDelay, 600, accuracy: 0.001)
     }
 
-    func testAutoKeysLoopDelay_ClampsBelowFloor() {
+    func testAutoKeysLoopDelay_ClampsNegativeToZero() {
+        // Wave 3c — floor is 0 (back-to-back iterations are valid).
+        // Negative values clamp up to 0; 0 itself is allowed.
         let store = LaunchSettingsStore(defaults: defaults)
-        store.setAutoKeysLoopDelay(5)
-        // Floor is 30s — anything lower clamps up.
-        XCTAssertEqual(store.autoKeysLoopDelay, 30, accuracy: 0.001)
+        store.setAutoKeysLoopDelay(-5)
+        XCTAssertEqual(store.autoKeysLoopDelay, 0, accuracy: 0.001)
+    }
+
+    func testAutoKeysLoopDelay_AllowsZero() {
+        let store = LaunchSettingsStore(defaults: defaults)
+        store.setAutoKeysLoopDelay(0)
+        XCTAssertEqual(store.autoKeysLoopDelay, 0, accuracy: 0.001)
     }
 
     func testAutoKeysLoopDelay_ClampsAboveCeiling() {

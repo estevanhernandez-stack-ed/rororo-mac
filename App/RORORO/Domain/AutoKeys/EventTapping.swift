@@ -34,11 +34,17 @@ public struct TappedEvent: Equatable, Sendable {
     /// `AutoKeysCyclerSourceTag`. The safety monitor ignores these so
     /// the cycler doesn't pause on its own keystrokes.
     public let isSelfTagged: Bool
+    /// Held modifier flags at the moment the event fired, masked to
+    /// `KillKeyCombo.relevantModifierMask` (Shift / Control / Option /
+    /// Command). Empty for `.mouseMoved`. Used by the safety monitor
+    /// to match composite kill-key gestures like Shift+F19.
+    public let modifiers: UInt
 
-    public init(kind: Kind, timestamp: Date, isSelfTagged: Bool) {
+    public init(kind: Kind, timestamp: Date, isSelfTagged: Bool, modifiers: UInt = 0) {
         self.kind = kind
         self.timestamp = timestamp
         self.isSelfTagged = isSelfTagged
+        self.modifiers = modifiers
     }
 }
 
@@ -115,10 +121,12 @@ public final class NSEventTapping: EventTapping, @unchecked Sendable {
     private func deliver(event: NSEvent, isLocal: Bool) {
         guard let kind = Self.classify(event) else { return }
         let isSelfTagged = Self.isSelfTagged(event)
+        let modifiers = event.modifierFlags.rawValue & KillKeyCombo.relevantModifierMask
         let tapped = TappedEvent(
             kind: kind,
             timestamp: Date(),
-            isSelfTagged: isSelfTagged
+            isSelfTagged: isSelfTagged,
+            modifiers: modifiers
         )
         lock.lock()
         let cont = continuation

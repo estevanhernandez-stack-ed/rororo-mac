@@ -18,6 +18,17 @@ import Foundation
 
 public actor AutoKeysSafetyMonitor {
 
+    /// Process-lifetime monitor — booted once by `AutoKeysCyclerViewModel`
+    /// after Input Monitoring is granted, then never stopped. Both the
+    /// view-model (always-on, for kill-key-as-toggle when cycler is
+    /// stopped) and the cycler (only while running, for engagement +
+    /// kill-while-running) subscribe via `observe()`. Multiple
+    /// subscribers each receive every event.
+    public static let shared = AutoKeysSafetyMonitor(
+        tapping: NSEventTapping(),
+        config: .default
+    )
+
     private let tapping: EventTapping
     private var config: AutoKeysSafetyConfig
     private var subscriptionTask: Task<Void, Never>?
@@ -96,21 +107,40 @@ public actor AutoKeysSafetyMonitor {
             broadcast(.userEngaged)
 
         case .keyDown(let keyCode):
-            // Every keyDown counts as engagement — including the kill
-            // key itself, since pressing the kill key means the user
-            // is at the keyboard. The cycler pauses on `.userEngaged`
-            // and stops on `.killRequested`; both can fire from the
-            // same physical press.
-            broadcast(.userEngaged)
-            if keyCode == config.killKeyCode {
+            // Diagnostic log — useful to confirm whether the kill combo
+            // is even being seen + why a near-miss didn't match.
+            NSLog("[RORORO] safety: keyDown code=\(keyCode) mods=\(event.modifiers) — kill expects code=\(config.killKey.keyCode) mods=\(config.killKey.modifiers)")
+            // Exclude the kill key from broadcasting `.userEngaged`.
+            // The kill key is the user's INTENTIONAL control gesture
+            // (start/pause/resume); treating it as engagement caused a
+            // race where the first tap of a double-tap paused the
+            // cycler via engagement, then the second tap's
+            // `.killRequested` saw state == .paused and called resume —
+            // so the user's "stop / pause" gesture actually restarted.
+            if matchesKillCombo(keyCode: keyCode, modifiers: event.modifiers) {
+                NSLog("[RORORO] safety: kill key matched — gesture=\(config.gesture)")
                 handleKillKeyDown(at: event.timestamp)
+                return
             }
+            broadcast(.userEngaged)
 
         case .keyUp(let keyCode):
-            if keyCode == config.killKeyCode {
+            // Kill-key release matters only for hold gestures. We don't
+            // require the modifier to still be held for the keyUp —
+            // releasing either part of the combo cancels the hold.
+            if keyCode == config.killKey.keyCode {
                 handleKillKeyUp()
             }
         }
+    }
+
+    /// Match `keyCode + modifiers` against the configured kill combo.
+    /// Modifier match is by exact equality after masking — extra held
+    /// modifiers (e.g. Shift+F19 when the user only configured F19)
+    /// won't match, preventing accidental kills from stray modifiers.
+    private func matchesKillCombo(keyCode: CGKeyCode, modifiers: UInt) -> Bool {
+        guard keyCode == config.killKey.keyCode else { return false }
+        return (modifiers & KillKeyCombo.relevantModifierMask) == config.killKey.modifiers
     }
 
     private func handleKillKeyDown(at timestamp: Date) {
@@ -148,6 +178,9 @@ public actor AutoKeysSafetyMonitor {
     }
 
     private func broadcast(_ event: EngagementEvent) {
+        if event == .killRequested {
+            NSLog("[RORORO] safety: BROADCAST killRequested to \(continuations.count) subscriber(s)")
+        }
         for continuation in continuations.values {
             continuation.yield(event)
         }
