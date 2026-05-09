@@ -73,8 +73,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.626labs.rororo-mac
         PRODUCT_NAME: RORORO
-        MARKETING_VERSION: "0.3.0"
-        CURRENT_PROJECT_VERSION: "3"
+        MARKETING_VERSION: "0.5.0"
+        CURRENT_PROJECT_VERSION: "5"
         INFOPLIST_FILE: RORORO/Info.plist
         CODE_SIGN_ENTITLEMENTS: RORORO/RORORO.entitlements
         ENABLE_APP_SANDBOX: NO
