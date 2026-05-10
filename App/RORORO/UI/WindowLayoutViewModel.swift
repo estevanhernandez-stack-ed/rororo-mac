@@ -130,7 +130,7 @@ public final class WindowLayoutViewModel {
         } else if sizeRejectedFullScreen > 0 {
             lastError = "Moved \(plan.count) window\(plan.count == 1 ? "" : "s"), but \(sizeRejectedFullScreen) is in macOS fullscreen. In Roblox's settings, turn Fullscreen OFF, then try again."
         } else if sizeRejectedOther > 0 {
-            lastError = "Moved \(plan.count) window\(plan.count == 1 ? "" : "s"), but \(sizeRejectedOther) silently snapped back to its render size. Roblox's engine is holding a fixed dimension regardless of OS-level resize. Check Console.app for `[RORORO] layout:` to see the snap-back size."
+            lastError = "Roblox is holding its render dimensions and refused to shrink. Window stayed put (we rolled back the move). To shrink further, lower Roblox's in-game resolution first — Roblox renders at its current resolution as a floor on this display."
         }
     }
 

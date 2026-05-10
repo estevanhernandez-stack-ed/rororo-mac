@@ -87,6 +87,19 @@ public struct DefaultAXWindowManager: AXWindowManager {
             NSLog("[RORORO] layout: pid=\(pid) is in macOS fullscreen — resize will be rejected")
         }
 
+        // Capture the original position BEFORE any writes. If size-set
+        // silently reverts (Roblox holds a render-bound minimum), we
+        // also roll back the position so the window doesn't appear to
+        // "move around like an anchor point" while not shrinking.
+        var origPosObj: AnyObject?
+        var originalPosition: CGPoint? = nil
+        if AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &origPosObj) == .success,
+           let raw = origPosObj {
+            var p = CGPoint.zero
+            AXValueGetValue(raw as! AXValue, .cgPoint, &p)
+            originalPosition = p
+        }
+
         let posErr = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, posValue)
         let sizeErr = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
 
@@ -123,19 +136,16 @@ public struct DefaultAXWindowManager: AXWindowManager {
             let widthDelta = abs(actual.width - frame.size.width)
             let heightDelta = abs(actual.height - frame.size.height)
             if widthDelta > 5 || heightDelta > 5 {
-                // Also probe the AX min-size so we know whether Roblox
-                // is clamping to a documented minimum (then we can adapt
-                // and clamp on our side) vs render-engine-bound (which
-                // needs a different workaround).
-                var minSizeStr = "unknown"
-                var minObj: AnyObject?
-                if AXUIElementCopyAttributeValue(window, "AXMinValue" as CFString, &minObj) == .success,
-                   let raw = minObj {
-                    var minS = CGSize.zero
-                    AXValueGetValue(raw as! AXValue, .cgSize, &minS)
-                    minSizeStr = "\(minS)"
+                // Roll back position so the window stays put rather than
+                // appearing to "move around like an anchor point" while
+                // staying full-size. Best-effort — if pos-revert fails,
+                // we proceed to throw anyway.
+                if var revertOrigin = originalPosition,
+                   let revertVal = AXValueCreate(.cgPoint, &revertOrigin) {
+                    _ = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, revertVal)
                 }
-                NSLog("[RORORO] layout: pid=\(pid) size silently reverted — asked \(frame.size), got \(actual) min=\(minSizeStr) fullscreen=\(isFullScreen)")
+
+                NSLog("[RORORO] layout: pid=\(pid) size silently reverted — asked \(frame.size), got \(actual) fullscreen=\(isFullScreen) — position rolled back")
                 throw AXWindowManagerError.sizeSetRejected(pid: pid, fullScreen: isFullScreen)
             }
         }
