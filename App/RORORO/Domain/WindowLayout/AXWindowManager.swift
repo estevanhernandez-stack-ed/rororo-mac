@@ -28,6 +28,10 @@ public enum AXWindowManagerError: Error, Equatable {
     case notRunning(pid: pid_t)
     case noMainWindow(pid: pid_t)
     case axCallFailed(code: Int32)
+    /// Position-set succeeded but size-set was rejected. Common for
+    /// windows in macOS fullscreen — caller surfaces a "switch Roblox
+    /// out of fullscreen" hint to the user.
+    case sizeSetRejected(pid: pid_t, fullScreen: Bool)
 }
 
 public struct DefaultAXWindowManager: AXWindowManager {
@@ -72,15 +76,41 @@ public struct DefaultAXWindowManager: AXWindowManager {
         let posValue = AXValueCreate(.cgPoint, &origin)!
         let sizeValue = AXValueCreate(.cgSize, &size)!
 
+        // Some Roblox windows are in fullscreen / borderless-windowed
+        // mode and AX rejects size-set with .cannotComplete (-25204) or
+        // .notImplemented (-25212). Check kAXFullScreenAttribute first
+        // so we can warn instead of silently moving without shrinking.
+        var isFullScreenObj: AnyObject?
+        let fsErr = AXUIElementCopyAttributeValue(window, "AXFullScreen" as CFString, &isFullScreenObj)
+        let isFullScreen = (fsErr == .success) && ((isFullScreenObj as? Bool) == true)
+        if isFullScreen {
+            NSLog("[RORORO] layout: pid=\(pid) is in macOS fullscreen — resize will be rejected")
+        }
+
         let posErr = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, posValue)
         let sizeErr = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
 
-        // One-of-two success is acceptable (some Roblox windows resist
-        // size-set during early load but accept position-set, and vice
-        // versa). Throw only if BOTH failed.
+        // Per-call logging so a partial-success (pos lands but size
+        // rejected) is visible in Console.app, not silently swallowed.
+        if posErr != .success {
+            NSLog("[RORORO] layout: pid=\(pid) pos-set err=\(posErr.rawValue)")
+        }
+        if sizeErr != .success {
+            NSLog("[RORORO] layout: pid=\(pid) size-set err=\(sizeErr.rawValue) fullscreen=\(isFullScreen)")
+        }
+
+        // Throw if BOTH failed; partial success (pos OR size) is acceptable
+        // but the caller should know if size specifically failed so it can
+        // route a useful warning to the user.
         if posErr != .success && sizeErr != .success {
-            NSLog("[RORORO] layout: pid=\(pid) resize failed pos=\(posErr.rawValue) size=\(sizeErr.rawValue)")
             throw AXWindowManagerError.axCallFailed(code: max(posErr.rawValue, sizeErr.rawValue))
+        }
+        if sizeErr != .success {
+            // Surface the size-set failure as a distinct error type so
+            // WindowLayoutViewModel can produce a helpful "switch Roblox
+            // out of fullscreen" message instead of treating the window
+            // as fully successful.
+            throw AXWindowManagerError.sizeSetRejected(pid: pid, fullScreen: isFullScreen)
         }
     }
 

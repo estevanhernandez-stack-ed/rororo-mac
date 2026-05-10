@@ -17,6 +17,13 @@ struct WindowLayoutToolbarView: View {
 
     var body: some View {
         Menu {
+            // Status line — visible signal that inherit is detecting (or
+            // not detecting) external Roblox processes. Disabled so it
+            // looks like a label, not an action. Always shows the
+            // RORORO-launched count; external count only when toggle is on.
+            Button(pidStatusText) { /* informational only */ }
+                .disabled(true)
+            Divider()
             // P1.5: include externally-launched Roblox windows in the
             // pid set so users can tile/shrink a pre-existing grinding
             // session without having to relaunch via RORORO. External
@@ -136,5 +143,21 @@ struct WindowLayoutToolbarView: View {
         cyclerIsRunning
             ? "Stop auto-keys to rearrange windows."
             : "Tile or resize all running Roblox windows."
+    }
+
+    private var pidStatusText: String {
+        let counts = vm.pidCounts()
+        if vm.includeExternalWindows {
+            switch (counts.rororo, counts.external) {
+            case (0, 0):  return "No Roblox windows detected"
+            case (let r, 0): return "\(r) RORORO · 0 external"
+            case (0, let e): return "0 RORORO · \(e) external"
+            case (let r, let e): return "\(r) RORORO · \(e) external"
+            }
+        } else {
+            return counts.rororo == 0
+                ? "No RORORO-launched windows"
+                : "\(counts.rororo) RORORO window\(counts.rororo == 1 ? "" : "s")"
+        }
     }
 }

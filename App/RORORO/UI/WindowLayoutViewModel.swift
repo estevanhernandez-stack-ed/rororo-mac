@@ -108,10 +108,17 @@ public final class WindowLayoutViewModel {
         )
 
         var anySucceeded = false
+        var sizeRejectedFullScreen = 0
+        var sizeRejectedOther = 0
         for (pid, frame) in plan {
             do {
                 try await manager.resize(pid: pid, to: frame)
                 anySucceeded = true
+            } catch let AXWindowManagerError.sizeSetRejected(_, fullScreen) {
+                // Position landed; size didn't. Count it so we can
+                // surface a useful hint without spamming.
+                anySucceeded = true
+                if fullScreen { sizeRejectedFullScreen += 1 } else { sizeRejectedOther += 1 }
             } catch {
                 NSLog("[RORORO] layout: pid=\(pid) resize threw \(error)")
                 // Continue — per-window failures are fail-soft.
@@ -120,7 +127,23 @@ public final class WindowLayoutViewModel {
 
         if !anySucceeded {
             lastError = "No windows were rearranged. Accessibility permission may be missing — open System Settings → Privacy & Security → Accessibility and grant RORORO."
+        } else if sizeRejectedFullScreen > 0 {
+            lastError = "Moved \(plan.count) window\(plan.count == 1 ? "" : "s"), but \(sizeRejectedFullScreen) couldn't resize because Roblox is in macOS fullscreen. In Roblox's settings, switch from Fullscreen to Windowed (or Borderless), then try again."
+        } else if sizeRejectedOther > 0 {
+            lastError = "Moved \(plan.count) window\(plan.count == 1 ? "" : "s"), but \(sizeRejectedOther) refused the size change. Check Roblox's display settings — windowed mode allows resize."
         }
+    }
+
+    // MARK: - inspection (UI feedback)
+
+    /// Counts shown in the Layout menu so the user can see whether the
+    /// inherit toggle is actually picking up external windows.
+    public func pidCounts() -> (rororo: Int, external: Int) {
+        let internalPids = Array(RunningAccountTracker.shared.pidsByUserId.values)
+        let external = includeExternalWindows
+            ? Self.enumerateExternalRobloxPids(excluding: Set(internalPids)).count
+            : 0
+        return (internalPids.count, external)
     }
 
     private func currentVisibleRect() -> CGRect {
