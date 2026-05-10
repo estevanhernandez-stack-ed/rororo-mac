@@ -1,7 +1,7 @@
 # ADR 0007 — Full-fidelity record-and-replay (action stream + mouse)
 
 **Date:** 2026-05-10
-**Status:** Draft
+**Status:** Accepted
 **Slope:** D-3 (record-and-replay)
 **Depends on:** Wave D-1 — `WindowRectTracker` (ships before this slope lands)
 **Reopens:** ADR 0004 Decision 2 (3-key cap) and Decision 5 (per-step interactive recorder) — both retracted by this ADR
@@ -30,7 +30,7 @@ enum AutoKeysAction {
 }
 ```
 
-The new cap is ~500 actions per sequence — high enough to capture a realistic 30–60 s in-game loop, low enough to bound playback time and serialization size. `dt` on each action is the delay *before* firing it (time since the prior action). Empty sequence = account skipped, same as ADR 0004 Decision 3 (unchanged).
+The cap is **500 actions per sequence** — high enough to capture a realistic 30–60 s in-game loop, low enough to bound playback time and serialization size. `dt` on each action is the delay *before* firing it (time since the prior action), measured via `CACurrentMediaTime()` per Decision 8. Empty sequence = account skipped, same as ADR 0004 Decision 3 (unchanged).
 
 **Rationale:** The 3-key cap covered the AFK keep-alive use case; it doesn't cover the "record what I actually do for 30 seconds and loop it" use case that motivates this slope. Splitting keyDown / keyUp into separate actions (instead of the ADR 0004 `(keyCode, delayAfter)` pair that fired both back-to-back) lets recorded sequences hold a key down across other actions — required for movement-while-clicking, charged attacks, anything with overlap. The 500-action cap is a sanity bound on serialization size (~30 KB at ~60 bytes per action JSON-encoded) and on the cycler's per-account budget (Decision 4 in ADR 0004's CycleBudget math now sums `dt` across the action stream instead of `delayAfter` across steps — same formula, larger numerator).
 
@@ -46,9 +46,13 @@ The new cap is ~500 actions per sequence — high enough to capture a realistic 
 
 **Consequences:** If the user resizes the Roblox window between record and replay, click positions are still anchored to the window's top-left and will land in the same relative spot — usually correct (UI elements move with the window), occasionally wrong (resized-down windows may hide elements that were visible at record time). Documented in the recorder footer. Out-of-window coords are clamped at playback to the window's current rect — a click recorded inside the window stays inside the window even if the window shrank.
 
+**Mid-replay window-closed behavior:** If `WindowRectTracker` reports the target window is gone at fire time (PID exited, window minimized, AX read fails), the player skips the remaining actions for that target this cycle, logs it, and the cycler continues with the next target on the next iteration. Matches ADR 0004 Decision 1 focus-failure recovery — skip-and-continue, never hard-stop.
+
 ## Decision 3 — Record → do the thing → Stop (TinyTask interaction shape)
 
 **Decision:** The recorder UX inverts to a single Record toggle. User clicks Record, performs the sequence in the Roblox window, clicks Stop. The action stream is captured verbatim — every keyDown, keyUp, mouseMove, mouseDown, mouseUp event, with measured `dt` between them. Replay is verbatim too.
+
+**Frontmost-only capture:** The recorder only records events while a tracked Roblox PID is frontmost. If the user Cmd-Tabs to Safari mid-record, capture pauses (the timeline gap is NOT recorded as actions); when focus returns to the target Roblox window, capture resumes. The recorder UI shows a "paused — Roblox not frontmost" indicator during the gap. Rationale: recording Safari clicks into a Roblox action stream is never what the user wants.
 
 **Rationale:** The per-step interactive recorder from ADR 0004 Decision 5 was bounded by the 3-step cap; it doesn't scale past ~10 actions before the prompt loop becomes its own friction. The user described the target shape directly: TinyTask's Record / Stop pattern. TinyTask is Windows-only freeware whose author has publicly welcomed others building from its UX — we take the *interaction shape* (one Record button, one Stop button, verbatim replay) and nothing else. No file format lift, no `.rec` interop, no shared internals.
 
@@ -57,6 +61,8 @@ The new cap is ~500 actions per sequence — high enough to capture a realistic 
 ## Decision 4 — Backwards-compat: legacy step lists migrate transparently
 
 **Decision:** Existing `AutoKeysSequence` payloads in `LaunchSettingsStore` (the 3-step capped list from ADR 0004) migrate on first load to a `.legacy([AutoKeysStep])` variant inside the new sequence type. The cycler routes legacy sequences through the old step-loop path; new recordings use the action-stream path. Both paths share the same cycler state machine and the same Decision 4 cycle-budget validator from ADR 0004.
+
+**Keep original on disk:** Migration runs on every load; the on-disk legacy bytes are NEVER rewritten until the user explicitly re-records that account. No silent mutation on load — write-on-migrate would be a surprise behavior the user can't undo. The legacy payload sticks around until the user chooses to re-record (which produces an action stream and overwrites cleanly).
 
 **Rationale:** No user is forced to re-record. A user who configured jump-spam under ADR 0004 keeps jump-spam working unchanged; the migration is invisible to them. The `.legacy` variant is a one-way bridge — once a user re-records an account, that account's sequence is an action stream and the legacy path is no longer involved for it. Old sequences stay legacy until re-recorded; new sequences are always action streams.
 
@@ -78,6 +84,22 @@ The new cap is ~500 actions per sequence — high enough to capture a realistic 
 
 **Consequences:** None — this is documentation, not behavior. The reaffirmation lives in this ADR so the `feedback_app_store_posture` memory's "capability ambition + ethical clarity, App Store opt-out accepted" stance stays load-bearing across the slope.
 
+## Decision 7 — Recordings scope to the account they're recorded on; explicit sharing
+
+**Decision:** Each `AutoKeysSequence` is owned by the account it was recorded on. By default, an account uses its own recording — no other account sees or uses it. The data model adds an `isShared: Bool` field on `AutoKeysSequence` (default `false`) and an `autoKeysSourceAccountId: Account.ID?` field on `Account`. When a user marks one of their account's recordings shared, that recording becomes selectable in other accounts' Auto-Keys configuration UI as "[OwnerAccount]'s recording — shared." Picking it sets the consumer account's `autoKeysSourceAccountId` to the owner's id (a reference, not a copy).
+
+**Rationale:** Two real use cases pull in opposite directions. (1) Per-account customization: each account plays a different game / class / role and their action stream legitimately differs. (2) Multi-account uniformity: jump-spam is jump-spam — recorded once, used everywhere. Default to (1) so the simple case ("I recorded this for Alice and only Alice runs it") doesn't accidentally fire the wrong actions on Bob. Sharing is an explicit opt-in for (2). No implicit cross-account use; no copy-by-default that drifts out of sync when the source is updated.
+
+**Consequences:** The configuration UI grows two sections per account: "This account's recording" (record / re-record / share toggle) and "Shared recordings from other accounts" (a picker of every other account whose recording is `isShared = true`). The cycler resolves at start: for each target account, if `autoKeysSourceAccountId` is set, look up that account's `autoKeys` and use it; else use own `autoKeys`. Deleting a shared recording's source account (or un-sharing it) needs a confirmation if any other accounts reference it — warn before orphaning. Account export/import (a future slope) handles the reference-vs-copy distinction; out of scope here.
+
+## Decision 8 — `dt` measured via `CACurrentMediaTime()` (monotonic clock)
+
+**Decision:** `ActionStreamRecorder` measures inter-event `dt` using `CACurrentMediaTime()`. Wallclock (`Date.now`) is explicitly rejected.
+
+**Rationale:** Wallclock can jump backward or forward on NTP correction, system sleep, manual time-change, or DST shift. A wallclock-measured `dt` of -200ms would crash playback math; a 30-second forward jump would inject a 30-second pause into the middle of a recording. `CACurrentMediaTime()` is monotonic, immune to all of those, and already used by the cycler's loop-timing path so no new dependency or import.
+
+**Consequences:** None observable to the user — the `dt` field is internal to the recorder/player path. Tests can fake the clock through the same DI seam that exists for `Sleeper`. The `dt` value stored on disk is always a non-negative `TimeInterval` (asserted at recorder shutdown).
+
 ## Implementation map
 
 | Layer | File | What it does |
@@ -90,8 +112,11 @@ The new cap is ~500 actions per sequence — high enough to capture a realistic 
 | Domain — new | `App/RORORO/Domain/AutoKeys/MouseEventPoster.swift` | Thin wrapper over `CGEvent.post` for mouse events (DI seam, mirrors `KeyEventPoster`). |
 | Domain — modified | `App/RORORO/Domain/AutoKeys/AutoKeysCycler.swift` | `runLoop` switches on sequence variant: legacy → existing step loop; action stream → `ActionStreamPlayer`. State machine unchanged. |
 | Domain — dependency | `App/RORORO/Domain/Windows/WindowRectTracker.swift` (Wave D-1) | Live window-rect lookup by PID. Hard prerequisite. |
-| UI — new | `App/RORORO/UI/AutoKeysRecorderV2Sheet.swift` | Record / Stop UX, live action count + elapsed time, action-cap warning at ~450. |
+| UI — new | `App/RORORO/UI/AutoKeysRecorderV2Sheet.swift` | Record / Stop UX, live action count + elapsed time, action-cap warning at ~450, "Roblox not frontmost" indicator during capture-paused gaps. Post-record: "Share this recording" toggle (Decision 7). |
 | UI — replaced | `App/RORORO/UI/AutoKeys/AutoKeysRecorderSheet.swift` (ADR 0004) | Removed from the surface — only the V2 sheet is presented for new recordings. |
+| Domain — modified | `App/RORORO/Domain/Account.swift` | Adds `autoKeysSourceAccountId: Account.ID?` field (Decision 7 sharing reference). |
+| Domain — modified | `App/RORORO/Domain/AccountStore.swift` | Codable migration for the new field (default nil for existing accounts). Cycler-start resolution: substitute source account's `autoKeys` when reference is set. |
+| UI — modified | `App/RORORO/UI/AccountsListView.swift` | Per-account row gains "Shared recordings from other accounts" picker when the user wants to reuse a sibling's recording. Share toggle on own recording. |
 
 ## Testing
 
@@ -117,16 +142,6 @@ The new cap is ~500 actions per sequence — high enough to capture a realistic 
 - **Lift TinyTask's `.rec` file format.** Killed by two facts: TinyTask is Windows-only with no public file-format spec, and we have no interop story worth building toward. We take TinyTask's *interaction shape*; the on-disk format is our own (Swift `Codable` on the action enum).
 - **Concurrent per-PID mouse posting (revisit ADR 0004 Decision 1's rejected approach).** Killed for the same reason as in ADR 0004 — `CGEventPostToPid` against backgrounded Roblox processes is unreliable, and the serial cycle's "focus, then fire" deterministically lands events in the right window. Mouse events inherit the same trade.
 - **Bound the action cap by serialized bytes instead of action count.** Considered — would let a 1000-key-only sequence through while blocking a 500-mouse-heavy one. Rejected as user-confusing; a count cap is easier to surface in the recorder UI ("450 / 500 actions") than a bytes cap ("28.4 / 30 KB").
-
-## Open questions (for Draft → Accepted)
-
-These must close before this ADR locks:
-
-1. **`dt` source — wallclock or monotonic?** `ActionStreamRecorder` measures inter-event timing. Wallclock is wrong (NTP jumps mid-recording). `mach_absolute_time` / `CACurrentMediaTime()` is correct but needs to be locked explicitly. Recommend `CACurrentMediaTime()` — already used elsewhere in the cycler's loop timing.
-2. **Action cap exact number.** ~500 is the working estimate. Does the user want it firmer (e.g., 480 to round under serialization-size bound) or looser (1000)? Same data-model question regardless; only the constant moves.
-3. **What happens when `WindowRectTracker` reports the target window has closed mid-replay?** Three options: (a) skip the account this cycle, log it, continue with the next (matches ADR 0004 Decision 1 focus-failure recovery); (b) hard-stop the cycler; (c) reuse last-known rect and fire anyway. Recommend (a).
-4. **Recorder scope — record only when Roblox is frontmost, or record everything?** If the user Cmd-Tabs to Safari mid-recording, do we capture those events too? Recommend frontmost-only (filter by target PID at capture time) — recording Safari clicks into an account's action stream is almost never what the user wants.
-5. **Legacy migration write-back.** When a legacy sequence loads and migrates to `.legacy(...)`, do we write the migrated shape back to disk immediately, or keep the original bytes until the user re-records? Recommend keep-original — write-on-migrate is a surprise mutation and doesn't pay for itself.
 
 ## References
 
