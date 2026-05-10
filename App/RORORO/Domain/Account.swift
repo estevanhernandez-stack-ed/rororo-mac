@@ -54,6 +54,14 @@ public struct Account: Codable, Equatable, Identifiable, Sendable {
     /// `AutoKeysSequence` itself; storage shape on disk is additive, so
     /// pre-Slope-C `accounts.json` files decode with `autoKeys = nil`.
     public var autoKeys: AutoKeysSequence?
+    /// Shared-recording reference (ADR 0007 Decision 7). When set, the
+    /// cycler resolves this account's playback through the *source*
+    /// account's `autoKeys` instead of its own. nil ≡ "use my own
+    /// recording." Source must have `isShared = true` on its
+    /// `AutoKeysSequence`; orphaned references (source deleted or
+    /// un-shared) skip the consumer on cycle start with a log. Codable
+    /// migration: pre-D-3 `accounts.json` files decode with this nil.
+    public var autoKeysSourceAccountId: Account.ID?
 
     public var id: String { userId }
 
@@ -67,7 +75,8 @@ public struct Account: Codable, Equatable, Identifiable, Sendable {
         cookieStatus: CookieStatus? = nil,
         cookieCheckedAt: Date? = nil,
         groupName: String? = nil,
-        autoKeys: AutoKeysSequence? = nil
+        autoKeys: AutoKeysSequence? = nil,
+        autoKeysSourceAccountId: Account.ID? = nil
     ) {
         self.userId = userId
         self.username = username
@@ -79,6 +88,7 @@ public struct Account: Codable, Equatable, Identifiable, Sendable {
         self.cookieCheckedAt = cookieCheckedAt
         self.groupName = groupName
         self.autoKeys = autoKeys
+        self.autoKeysSourceAccountId = autoKeysSourceAccountId
     }
 }
 
