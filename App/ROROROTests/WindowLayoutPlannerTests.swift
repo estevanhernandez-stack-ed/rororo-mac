@@ -182,79 +182,91 @@ final class WindowLayoutPlannerTests: XCTestCase {
         XCTAssertEqual(a[1]!.origin, .zero)
     }
 
-    // MARK: - shrink
+    // MARK: - cascade
 
-    func testShrink_50Percent_PreservesCenter() {
-        // Window at (200, 100, 1280, 720) → center (840, 460).
-        // 50% shrink → (640×360) centered on (840, 460) → (520, 280).
+    func testCascade_FirstPidAtOrigin() {
+        // Single window starts at visibleRect.origin with current size.
         let current: [pid_t: CGRect] = [
-            42: CGRect(x: 200, y: 100, width: 1280, height: 720)
+            42: CGRect(x: 200, y: 100, width: 1024, height: 768)
         ]
         let plan = WindowLayoutPlanner.plan(
-            mode: .shrink(percent: 0.5),
+            mode: .cascade(),
             pids: [42],
             visibleRect: standardRect,
             currentFrames: current
         )
-        XCTAssertEqual(plan[42], CGRect(x: 520, y: 280, width: 640, height: 360))
+        XCTAssertEqual(plan[42], CGRect(x: 0, y: 0, width: 1024, height: 768))
     }
 
-    func testShrink_25Percent_QuarterSize() {
+    func testCascade_StaircaseOffset40x40() {
+        // Three windows, each offset 40x40 from the previous.
         let current: [pid_t: CGRect] = [
-            7: CGRect(x: 0, y: 0, width: 800, height: 600)
+            1: CGRect(x: 0, y: 0, width: 800, height: 600),
+            2: CGRect(x: 0, y: 0, width: 800, height: 600),
+            3: CGRect(x: 0, y: 0, width: 800, height: 600),
         ]
         let plan = WindowLayoutPlanner.plan(
-            mode: .shrink(percent: 0.25),
-            pids: [7],
+            mode: .cascade(),
+            pids: [1, 2, 3],
             visibleRect: standardRect,
             currentFrames: current
         )
-        // Center of (0,0,800,600) = (400, 300). 25% → 200×150 around (400, 300)
-        // → origin (300, 225).
-        XCTAssertEqual(plan[7], CGRect(x: 300, y: 225, width: 200, height: 150))
+        XCTAssertEqual(plan[1]!.origin, CGPoint(x: 0,  y: 0))
+        XCTAssertEqual(plan[2]!.origin, CGPoint(x: 40, y: 40))
+        XCTAssertEqual(plan[3]!.origin, CGPoint(x: 80, y: 80))
     }
 
-    func testShrink_100Percent_NoOp() {
+    func testCascade_PreservesCurrentSize() {
+        // Each window's current size flows through to the cascaded frame —
+        // no resize, position-only.
         let current: [pid_t: CGRect] = [
-            1: CGRect(x: 50, y: 50, width: 400, height: 300)
+            1: CGRect(x: 0,   y: 0,   width: 800,  height: 600),
+            2: CGRect(x: 100, y: 100, width: 1280, height: 720),
         ]
         let plan = WindowLayoutPlanner.plan(
-            mode: .shrink(percent: 1.0),
-            pids: [1],
-            visibleRect: standardRect,
-            currentFrames: current
-        )
-        XCTAssertEqual(plan[1], current[1])
-    }
-
-    func testShrink_PidWithoutCurrentFrame_IsSkipped() {
-        // Pid is in the input list but we have no current frame for it →
-        // planner can't compute a shrink, drops it.
-        let plan = WindowLayoutPlanner.plan(
-            mode: .shrink(percent: 0.5),
-            pids: [10, 20],
-            visibleRect: standardRect,
-            currentFrames: [10: CGRect(x: 0, y: 0, width: 100, height: 100)]
-        )
-        XCTAssertEqual(plan.count, 1)
-        XCTAssertNotNil(plan[10])
-        XCTAssertNil(plan[20])
-    }
-
-    func testShrink_MultipleWindows_EachPreservesOwnCenter() {
-        let current: [pid_t: CGRect] = [
-            1: CGRect(x: 0,   y: 0,   width: 200, height: 200),  // center (100, 100)
-            2: CGRect(x: 500, y: 500, width: 400, height: 400),  // center (700, 700)
-        ]
-        let plan = WindowLayoutPlanner.plan(
-            mode: .shrink(percent: 0.5),
+            mode: .cascade(),
             pids: [1, 2],
             visibleRect: standardRect,
             currentFrames: current
         )
-        // pid 1 → 100×100 around (100, 100) → (50, 50, 100, 100)
-        XCTAssertEqual(plan[1], CGRect(x: 50, y: 50, width: 100, height: 100))
-        // pid 2 → 200×200 around (700, 700) → (600, 600, 200, 200)
-        XCTAssertEqual(plan[2], CGRect(x: 600, y: 600, width: 200, height: 200))
+        XCTAssertEqual(plan[1]!.size, CGSize(width: 800,  height: 600))
+        XCTAssertEqual(plan[2]!.size, CGSize(width: 1280, height: 720))
+    }
+
+    func testCascade_FallsBackToDefaultSizeIfNoCurrentFrame() {
+        // External Roblox window we couldn't probe — planner uses the
+        // 1024x768 default so the layout still produces something.
+        let plan = WindowLayoutPlanner.plan(
+            mode: .cascade(),
+            pids: [99],
+            visibleRect: standardRect,
+            currentFrames: [:]
+        )
+        XCTAssertEqual(plan[99]!.size, CGSize(width: 1024, height: 768))
+    }
+
+    func testCascade_WrapsToNewColumnWhenStackExceedsHeight() {
+        // 800-tall visible rect, 60px title-bar headroom. With offsetY=40,
+        // a stack of 19 windows pushes past the bottom and wraps. The
+        // 20th lands in a new column starting 200px right.
+        let current = (1...20).reduce(into: [pid_t: CGRect]()) { dict, n in
+            dict[pid_t(n)] = CGRect(x: 0, y: 0, width: 800, height: 600)
+        }
+        let pids = (1...20).map(pid_t.init)
+        let plan = WindowLayoutPlanner.plan(
+            mode: .cascade(),
+            pids: pids,
+            visibleRect: standardRect,
+            currentFrames: current
+        )
+        // First window at origin.
+        XCTAssertEqual(plan[1]!.origin, .zero)
+        // At least one window should have wrapped into a new column —
+        // x > 0 + offsetX*N for some N. Detect by finding any window
+        // whose x is at the wrap-column base (200) and y back near 0.
+        let wrapped = plan.values.contains {
+            abs($0.origin.x - 200) < 5 && $0.origin.y < 60
+        }
+        XCTAssertTrue(wrapped, "Cascade should wrap to a new column when the stack exceeds visibleRect height")
     }
 }

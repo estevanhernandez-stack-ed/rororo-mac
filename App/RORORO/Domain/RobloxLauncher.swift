@@ -133,14 +133,6 @@ public final class RobloxLauncher {
                 NSLog("[RORORO] GlobalSettingsWriter failed: \(error)")
             }
         }
-        if let size = snapshot.startScreenSize {
-            do {
-                try GlobalSettingsWriter.setStartScreenSize(width: size.width, height: size.height)
-                NSLog("[RORORO] launch: applied StartScreenSize=\(size.width)x\(size.height)")
-            } catch {
-                NSLog("[RORORO] GlobalSettingsWriter setStartScreenSize failed: \(error)")
-            }
-        }
         if !snapshot.fflags.isEmpty {
             let payload: [String: Any] = snapshot.fflags.mapValues { $0.jsonObject }
             do {

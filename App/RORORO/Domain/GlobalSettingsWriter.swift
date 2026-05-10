@@ -32,7 +32,6 @@ public enum GlobalSettingsWriter {
         case settingsFileNotFound(searchedDir: String)
         case parseFailure(reason: String)
         case framerateCapElementMissing
-        case startScreenSizeElementMissing
         case writeFailed(underlying: String)
     }
 
@@ -95,42 +94,6 @@ public enum GlobalSettingsWriter {
             throw WriterError.framerateCapElementMissing
         }
         element.stringValue = String(value)
-
-        let data = document.xmlData(options: [.nodePreserveWhitespace, .nodePreserveCDATA])
-        do {
-            try data.write(to: url, options: [.atomic])
-        } catch {
-            throw WriterError.writeFailed(underlying: String(describing: error))
-        }
-    }
-
-    /// Surgically set `<Vector2 name="StartScreenSize"><X>W</X><Y>H</Y></Vector2>`
-    /// to the requested width × height. This element is the launch-time
-    /// window size Roblox reads on startup — and acts as the floor for
-    /// AX-driven resize once the window is up. Writing it lower lets the
-    /// Window Layout tool's Shrink action go below 800×600 (the default
-    /// floor on most installs). Atomic write; preserves siblings.
-    public static func setStartScreenSize(
-        width: Int,
-        height: Int,
-        directory: URL = defaultSearchDirectory
-    ) throws {
-        let url = try requireSettingsFile(in: directory)
-        let document = try parseDocument(at: url)
-        let xNodes: [XMLNode]
-        let yNodes: [XMLNode]
-        do {
-            xNodes = try document.nodes(forXPath: "//Vector2[@name='StartScreenSize']/X")
-            yNodes = try document.nodes(forXPath: "//Vector2[@name='StartScreenSize']/Y")
-        } catch {
-            throw WriterError.parseFailure(reason: "xpath failed: \(error)")
-        }
-        guard let xElement = xNodes.compactMap({ $0 as? XMLElement }).first,
-              let yElement = yNodes.compactMap({ $0 as? XMLElement }).first else {
-            throw WriterError.startScreenSizeElementMissing
-        }
-        xElement.stringValue = String(width)
-        yElement.stringValue = String(height)
 
         let data = document.xmlData(options: [.nodePreserveWhitespace, .nodePreserveCDATA])
         do {

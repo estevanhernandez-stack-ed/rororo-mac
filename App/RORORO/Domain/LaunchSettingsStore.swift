@@ -26,12 +26,6 @@ public final class LaunchSettingsStore: ObservableObject {
 
     @Published public private(set) var framerateCap: Int?
     @Published public private(set) var fflags: [String: AnyCodableValue]
-    /// Launch-time window dimensions written to `StartScreenSize` in
-    /// GlobalBasicSettings_<N>.xml (Slope D / P2.5). When set, Roblox
-    /// boots at this size — and AX shrink actions can subsequently
-    /// resize the window down to (but not below) this floor. Default
-    /// nil (don't override; Roblox keeps its 800×600 default).
-    @Published public private(set) var startScreenSize: LaunchScreenSize?
     /// Cycler loop delay in seconds (Slope C). The pause that the
     /// cycler observes between completing one full pass over all
     /// configured accounts and starting the next. Default `14 * 60`
@@ -86,24 +80,10 @@ public final class LaunchSettingsStore: ObservableObject {
             self.autoKeysSafety = .default
         }
         self.autoKeysStayAwakeMode = defaults.bool(forKey: Keys.autoKeysStayAwakeMode)
-        if let raw = defaults.data(forKey: Keys.startScreenSize),
-           let decoded = try? JSONDecoder().decode(LaunchScreenSize.self, from: raw) {
-            self.startScreenSize = decoded
-        } else {
-            self.startScreenSize = nil
-        }
-    }
-
-    /// Set the launch-time start-screen-size override (P2.5). Pass nil
-    /// to clear (Roblox keeps its default 800×600). Persisted via
-    /// JSON-encoded UserDefaults entry — survives relaunch.
-    public func setStartScreenSize(_ size: LaunchScreenSize?) {
-        startScreenSize = size
-        if let size, let encoded = try? JSONEncoder().encode(size) {
-            defaults.set(encoded, forKey: Keys.startScreenSize)
-        } else {
-            defaults.removeObject(forKey: Keys.startScreenSize)
-        }
+        // Clean up any leftover P2.5 launch-size key from prior testing.
+        // P2.5 was retracted — StartScreenSize is not the lever Roblox
+        // uses for its hardcoded 800x600 player window floor.
+        defaults.removeObject(forKey: "rororo.launch.startScreenSize")
     }
 
     public func setFramerateCap(_ value: Int?) {
@@ -158,34 +138,20 @@ public final class LaunchSettingsStore: ObservableObject {
     /// launch time without holding a reference to the store on a non-main
     /// actor.
     public func snapshot() -> Snapshot {
-        Snapshot(framerateCap: framerateCap, fflags: fflags, startScreenSize: startScreenSize)
+        Snapshot(framerateCap: framerateCap, fflags: fflags)
     }
 
     public struct Snapshot: Sendable, Equatable {
         public let framerateCap: Int?
         public let fflags: [String: AnyCodableValue]
-        public let startScreenSize: LaunchScreenSize?
     }
 
     private enum Keys {
         static let framerateCap = "rororo.launch.framerateCap"
         static let fflags = "rororo.launch.fflags"
-        static let startScreenSize = "rororo.launch.startScreenSize"
         static let autoKeysLoopDelay = "rororo.autoKeys.loopDelay"
         static let autoKeysSafety = "rororo.autoKeys.safety"
         static let autoKeysStayAwakeMode = "rororo.autoKeys.stayAwakeMode"
-    }
-}
-
-/// Launch-time window dimensions for Roblox's `StartScreenSize` setting.
-/// Codable + Sendable so it can persist via UserDefaults JSON and ride
-/// in the snapshot to the launcher actor.
-public struct LaunchScreenSize: Codable, Equatable, Sendable {
-    public let width: Int
-    public let height: Int
-    public init(width: Int, height: Int) {
-        self.width = width
-        self.height = height
     }
 }
 

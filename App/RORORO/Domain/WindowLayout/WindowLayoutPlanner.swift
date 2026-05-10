@@ -28,8 +28,8 @@ public struct WindowLayoutPlanner {
         case .grid(let cols, let rows):
             return gridFrames(pids: sorted, cols: cols, rows: rows, in: visibleRect)
 
-        case .shrink(let percent):
-            return shrinkFrames(pids: sorted, percent: percent, currentFrames: currentFrames)
+        case .cascade(let offsetX, let offsetY):
+            return cascadeFrames(pids: sorted, offsetX: offsetX, offsetY: offsetY, in: visibleRect, currentFrames: currentFrames)
         }
     }
 
@@ -59,24 +59,38 @@ public struct WindowLayoutPlanner {
         return out
     }
 
-    private static func shrinkFrames(
+    /// Cascade — staircase arrangement. Each window keeps its current
+    /// size (no AX size-set involved, so the Roblox 800x600 floor is
+    /// irrelevant). Positions are offset by (offsetX, offsetY) per pid.
+    /// First pid (lowest sort) lands at visibleRect.origin; each
+    /// subsequent pid steps right + down. Wraps to a new "stack" when
+    /// the next position would push the title bar off-screen.
+    private static func cascadeFrames(
         pids: [pid_t],
-        percent: Double,
+        offsetX: CGFloat,
+        offsetY: CGFloat,
+        in rect: CGRect,
         currentFrames: [pid_t: CGRect]
     ) -> [pid_t: CGRect] {
         var out: [pid_t: CGRect] = [:]
+        // Reasonable default size when we don't know the window's
+        // current dimensions (e.g., external-Roblox window we can't
+        // probe). 1024x768 fits most displays comfortably.
+        let defaultSize = CGSize(width: 1024, height: 768)
+        var cursor = rect.origin
+        var stackBase = rect.origin
         for pid in pids {
-            guard let current = currentFrames[pid] else { continue }
-            let newW = current.width  * CGFloat(percent)
-            let newH = current.height * CGFloat(percent)
-            let centerX = current.midX
-            let centerY = current.midY
-            out[pid] = CGRect(
-                x: centerX - newW / 2,
-                y: centerY - newH / 2,
-                width: newW,
-                height: newH
-            )
+            let size = currentFrames[pid]?.size ?? defaultSize
+            // Wrap if cursor would push the title bar below visibleRect's
+            // bottom — start a new "column" offset by 200px right of the
+            // current stack base. Keeps cascades visible on tall stacks.
+            if cursor.y + 60 > rect.maxY {  // 60 = approx title bar height
+                stackBase.x += 200
+                cursor = stackBase
+            }
+            out[pid] = CGRect(origin: cursor, size: size)
+            cursor.x += offsetX
+            cursor.y += offsetY
         }
         return out
     }

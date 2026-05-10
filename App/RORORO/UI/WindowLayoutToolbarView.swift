@@ -14,7 +14,6 @@ struct WindowLayoutToolbarView: View {
 
     @State private var vm = WindowLayoutViewModel.shared
     @State private var cyclerVM = AutoKeysCyclerViewModel.shared
-    @ObservedObject private var launchStore = LaunchSettingsStore.shared
 
     var body: some View {
         Menu {
@@ -26,7 +25,7 @@ struct WindowLayoutToolbarView: View {
                 .disabled(true)
             Divider()
             // P1.5: include externally-launched Roblox windows in the
-            // pid set so users can tile/shrink a pre-existing grinding
+            // pid set so users can tile/cascade a pre-existing grinding
             // session without having to relaunch via RORORO. External
             // windows still don't get accounts/auto-keys/relogin —
             // window mgmt only.
@@ -40,17 +39,9 @@ struct WindowLayoutToolbarView: View {
                     systemImage: "rectangle.stack.badge.plus"
                 )
             }
-            .help("When ON, Tile/Shrink also moves Roblox windows that weren't launched by RORORO. They don't become accounts.")
+            .help("When ON, Tile and Cascade also move Roblox windows that weren't launched by RORORO. They don't become accounts.")
             Divider()
             tileSection
-            Divider()
-            shrinkSection
-            Divider()
-            launchSizeSection
-            Divider()
-            Button("Custom Size…") { /* P2 */ }
-                .disabled(true)
-                .help("Coming soon — custom size slider lands in P2.")
         } label: {
             Label("Layout", systemImage: "rectangle.3.offgrid")
                 .foregroundStyle(Theme.Color.fg2)
@@ -109,60 +100,17 @@ struct WindowLayoutToolbarView: View {
                 }
             }
             .disabled(cyclerIsRunning)
-        }
-    }
-
-    @ViewBuilder
-    private var launchSizeSection: some View {
-        Menu("Launch size (next launch)") {
-            Button(launchSizeLabel(nil, label: "Default (don't override)")) {
-                launchStore.setStartScreenSize(nil)
-            }
             Divider()
-            ForEach(Self.launchSizePresets, id: \.label) { preset in
-                Button(launchSizeLabel(preset.size, label: preset.label)) {
-                    launchStore.setStartScreenSize(preset.size)
-                }
+            // Cascade — staircase, position-only. Sidesteps the
+            // 800x600 floor that killed shrink. Useful for
+            // multi-instance macros where you want every window's
+            // title bar visible at a glance.
+            Button("Cascade") {
+                Task { await vm.applyCascade() }
             }
+            .disabled(cyclerIsRunning)
+            .help("Stairstep arrangement — title bars stay visible. Each window keeps its current size; only positions move.")
         }
-        .help("Sets Roblox's StartScreenSize for the NEXT launch. Lower than 800×600 lets the Shrink action go below Roblox's default render floor. Applies to RORORO-launched accounts only.")
-    }
-
-    private static let launchSizePresets: [(label: String, size: LaunchScreenSize)] = [
-        ("640 × 400", LaunchScreenSize(width: 640, height: 400)),
-        ("640 × 480", LaunchScreenSize(width: 640, height: 480)),
-        ("800 × 600  (Roblox default)", LaunchScreenSize(width: 800, height: 600)),
-        ("1024 × 768", LaunchScreenSize(width: 1024, height: 768)),
-        ("1280 × 720", LaunchScreenSize(width: 1280, height: 720)),
-    ]
-
-    private func launchSizeLabel(_ size: LaunchScreenSize?, label: String) -> String {
-        let current = launchStore.startScreenSize
-        let isCurrent = (size == nil && current == nil) || (size == current)
-        return isCurrent ? "✓ \(label)" : label
-    }
-
-    @ViewBuilder
-    private var shrinkSection: some View {
-        Menu("Shrink") {
-            Button("25%") {
-                Task { await vm.applyShrink(percent: 0.25) }
-            }
-            .disabled(cyclerIsRunning)
-            Button("50%") {
-                Task { await vm.applyShrink(percent: 0.50) }
-            }
-            .disabled(cyclerIsRunning)
-            Button("75%") {
-                Task { await vm.applyShrink(percent: 0.75) }
-            }
-            .disabled(cyclerIsRunning)
-            Button("100% (restore)") {
-                Task { await vm.applyShrink(percent: 1.0) }
-            }
-            .disabled(cyclerIsRunning)
-        }
-        .help("Shrink each window proportionally around its current center.")
     }
 
     // MARK: - state

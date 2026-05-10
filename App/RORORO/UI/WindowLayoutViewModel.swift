@@ -61,8 +61,8 @@ public final class WindowLayoutViewModel {
         await apply(mode: .grid(cols: cols, rows: rows))
     }
 
-    public func applyShrink(percent: Double) async {
-        await apply(mode: .shrink(percent: percent))
+    public func applyCascade() async {
+        await apply(mode: .cascade())
     }
 
     // MARK: - private
@@ -89,10 +89,10 @@ public final class WindowLayoutViewModel {
 
         let visibleRect = currentVisibleRect()
 
-        // Read current frames only when needed (shrink). For grid modes
-        // we don't need them — saves one AX round-trip per pid.
+        // Cascade preserves current size; we need current frames per pid.
+        // Tile/grid modes don't need them — save one AX round-trip per pid.
         var currentFrames: [pid_t: CGRect] = [:]
-        if case .shrink = mode {
+        if case .cascade = mode {
             for pid in pids {
                 if let frame = try? await manager.mainWindowFrame(pid: pid) {
                     currentFrames[pid] = frame
