@@ -32,7 +32,7 @@ A user running 4–9 Roblox accounts via RORORO has 4–9 full-size windows stac
 
 ### 4.1 Component map
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │ UI Layer                                                         │
 │                                                                  │
@@ -77,7 +77,7 @@ A user running 4–9 Roblox accounts via RORORO has 4–9 full-size windows stac
 
 ### 5.1 User taps "Tile → Auto-grid"
 
-```
+```text
 User → WindowLayoutToolbarView Menu item tap
      → WindowLayoutViewModel.applyAutoGrid()
         ├─ guard cycler.state != .running else { error alert; return }
@@ -95,7 +95,7 @@ Same flow, mode = `.shrink(percent: 0.50)`. Planner anchors each output frame at
 
 ### 5.3 Cycler running → menu items disabled
 
-```
+```swift
 WindowLayoutToolbarView body:
   Menu("Tile") {
     Button("Auto-grid") { vm.applyAutoGrid() }
