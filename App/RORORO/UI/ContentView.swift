@@ -17,6 +17,7 @@ struct ContentView: View {
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
                     multiInstanceToggle
+                    WindowLayoutToolbarView()
                     CyclerToolbarView()
                     // .foregroundStyle goes on the Label (not the Button)
                     // because SwiftUI toolbar Button styling doesn't

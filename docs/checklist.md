@@ -42,25 +42,25 @@
   Acceptance: All 5 shrink tests pass; 17 total planner tests passing. Center-anchored math verified against the canonical example (200,100,1280,720) → 50% → (520,280,640,360).
   Verify: Run `xcodebuild ... test -only-testing:ROROROTests/WindowLayoutPlannerTests 2>&1 | tail -10`. Expect 17 tests passed.
 
-- [ ] **5. AXWindowManager — protocol + DefaultAXWindowManager**
+- [x] **5. AXWindowManager — protocol + DefaultAXWindowManager**
   Spec ref: `superpowers/specs/2026-05-09-window-layout-tool-design.md > §4.1 Component map > AXWindowManager` and `decisions/0005-window-layout-tool.md > Implementation map > Domain — service`.
   What to build: Create `App/RORORO/Domain/WindowLayout/AXWindowManager.swift` exposing `AXWindowManager: Sendable` protocol with `mainWindowFrame(pid:) async throws -> CGRect` and `resize(pid:to:) async throws`, plus `AXWindowManagerError` enum (`.notRunning`, `.noMainWindow`, `.axCallFailed`). Concrete `DefaultAXWindowManager` wraps `AXUIElementSetAttributeValue` for `kAXPositionAttribute` + `kAXSizeAttribute` using `AXValueCreate(.cgPoint)` / `AXValueCreate(.cgSize)`. Mirrors the proven `WindowFocuser` pattern (Slope C wave 1). Full code in implementation plan task 5.
   Acceptance: Protocol + impl compile clean. NSLog line on resize failure includes both pos/size error codes. One-of-two success treated as success (e.g., position-set succeeds even if size-set fails).
   Verify: Run `cd App && xcodegen generate && cd .. && xcodebuild -project App/RORORO.xcodeproj -scheme RORORO build 2>&1 | tail -5`. Expect `** BUILD SUCCEEDED **`.
 
-- [ ] **6. WindowLayoutViewModel**
+- [x] **6. WindowLayoutViewModel**
   Spec ref: `superpowers/specs/2026-05-09-window-layout-tool-design.md > §4.1 Component map > WindowLayoutViewModel` and §5 Data flow §6 Error handling.
   What to build: Create `App/RORORO/UI/WindowLayoutViewModel.swift` — `@MainActor @Observable` singleton with `applyAutoGrid()`, `applyGrid(cols:rows:)`, `applyShrink(percent:)` async methods. Reads pids from `RunningAccountTracker.shared`, current frames from `AXWindowManager` (only when needed for shrink), visible rect from `NSApp.mainWindow?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame`. Cycler-state guard at the start of `apply(mode:)` (defense-in-depth — the UI also disables menu items). Per-window failures fail-soft (log + continue); whole-batch failure surfaces via `lastError` for an alert. Full code in implementation plan task 6.
   Acceptance: VM compiles. Cycler-state guard returns early with user-facing error when `AutoKeysCyclerViewModel.shared.state == .running`. Empty pids set returns early with "No RORORO-launched Roblox windows are running."
   Verify: Run `xcodebuild ... build 2>&1 | tail -5`. Expect `** BUILD SUCCEEDED **`.
 
-- [ ] **7. WindowLayoutToolbarView**
+- [x] **7. WindowLayoutToolbarView**
   Spec ref: `superpowers/specs/2026-05-09-window-layout-tool-design.md > §4.1 Component map > WindowLayoutToolbarView` and `decisions/0005-window-layout-tool.md > §3 Decision (placement and shape, implicit in Implementation map)`.
   What to build: Create `App/RORORO/UI/WindowLayoutToolbarView.swift` — SwiftUI `Menu` with `Label("Layout", systemImage: "rectangle.3.offgrid")`. Tile submenu enabled with 5 items (Auto-grid / 2×2 / 3×3 / Row (1×N) / Column (N×1)) — Row/Column compute N from `RunningAccountTracker.shared.pidsByUserId.count`. Shrink submenu present with 4 items, all `.disabled(true)` and "Coming soon" tooltip (P2 placeholders). "Custom Size…" item also disabled. Cycler-state reactive disable on every Tile button via `cyclerIsRunning` computed property reading `AutoKeysCyclerViewModel.shared.state`. Alert binding wired to `vm.lastError` with "Open Settings" action when error mentions "Accessibility". Use `Theme.Color.fg2` for the label foreground. Full code in implementation plan task 7.
   Acceptance: View compiles. Tile items disabled when cycler is `.running`; enabled otherwise. Shrink + Custom items disabled with helpful tooltips. Alert presents `vm.lastError` and clears it on dismiss.
   Verify: Run `xcodebuild ... build 2>&1 | tail -5`. Expect `** BUILD SUCCEEDED **`.
 
-- [ ] **8. ContentView wire-in**
+- [x] **8. ContentView wire-in**
   Spec ref: `decisions/0005-window-layout-tool.md > Implementation map > UI — wiring`.
   What to build: Modify `App/RORORO/UI/ContentView.swift` — insert `WindowLayoutToolbarView()` into the `ToolbarItemGroup(placement: .primaryAction)` between `multiInstanceToggle` and `CyclerToolbarView()`. One-line insert. After this item the toolbar reads (left → right): Multi-instance toggle · Layout · Cycler · Games · Settings · More.
   Acceptance: Toolbar order matches the spec's component map. Full test suite passes (no regressions in existing tests).
