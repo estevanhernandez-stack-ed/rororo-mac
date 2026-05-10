@@ -123,7 +123,19 @@ public struct DefaultAXWindowManager: AXWindowManager {
             let widthDelta = abs(actual.width - frame.size.width)
             let heightDelta = abs(actual.height - frame.size.height)
             if widthDelta > 5 || heightDelta > 5 {
-                NSLog("[RORORO] layout: pid=\(pid) size silently reverted — asked \(frame.size), got \(actual) fullscreen=\(isFullScreen)")
+                // Also probe the AX min-size so we know whether Roblox
+                // is clamping to a documented minimum (then we can adapt
+                // and clamp on our side) vs render-engine-bound (which
+                // needs a different workaround).
+                var minSizeStr = "unknown"
+                var minObj: AnyObject?
+                if AXUIElementCopyAttributeValue(window, "AXMinValue" as CFString, &minObj) == .success,
+                   let raw = minObj {
+                    var minS = CGSize.zero
+                    AXValueGetValue(raw as! AXValue, .cgSize, &minS)
+                    minSizeStr = "\(minS)"
+                }
+                NSLog("[RORORO] layout: pid=\(pid) size silently reverted — asked \(frame.size), got \(actual) min=\(minSizeStr) fullscreen=\(isFullScreen)")
                 throw AXWindowManagerError.sizeSetRejected(pid: pid, fullScreen: isFullScreen)
             }
         }

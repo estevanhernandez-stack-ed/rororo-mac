@@ -128,9 +128,9 @@ public final class WindowLayoutViewModel {
         if !anySucceeded {
             lastError = "No windows were rearranged. Accessibility permission may be missing — open System Settings → Privacy & Security → Accessibility and grant RORORO."
         } else if sizeRejectedFullScreen > 0 {
-            lastError = "Moved \(plan.count) window\(plan.count == 1 ? "" : "s"), but \(sizeRejectedFullScreen) couldn't resize because Roblox is in macOS fullscreen. In Roblox's settings, switch from Fullscreen to Windowed (or Borderless), then try again."
+            lastError = "Moved \(plan.count) window\(plan.count == 1 ? "" : "s"), but \(sizeRejectedFullScreen) is in macOS fullscreen. In Roblox's settings, turn Fullscreen OFF, then try again."
         } else if sizeRejectedOther > 0 {
-            lastError = "Moved \(plan.count) window\(plan.count == 1 ? "" : "s"), but \(sizeRejectedOther) refused the size change. Check Roblox's display settings — windowed mode allows resize."
+            lastError = "Moved \(plan.count) window\(plan.count == 1 ? "" : "s"), but \(sizeRejectedOther) silently snapped back to its render size. Roblox's engine is holding a fixed dimension regardless of OS-level resize. Check Console.app for `[RORORO] layout:` to see the snap-back size."
         }
     }
 
