@@ -18,25 +18,25 @@
 
 ## Checklist
 
-- [ ] **1. LayoutMode enum**
+- [x] **1. LayoutMode enum**
   Spec ref: `superpowers/specs/2026-05-09-window-layout-tool-design.md > §4.1 Component map > Domain Layer`
   What to build: Create `App/RORORO/Domain/WindowLayout/LayoutMode.swift` exposing a public `LayoutMode: Equatable, Sendable` enum with three cases: `.grid(cols: Int, rows: Int)`, `.autoGrid`, `.shrink(percent: Double)`. Doc-comment each case explaining its semantic. Full code body is in the implementation plan task 1 step 1 (`docs/superpowers/plans/2026-05-09-window-layout-tool.md`).
   Acceptance: File exists, project compiles after `cd App && xcodegen generate && xcodebuild -project App/RORORO.xcodeproj -scheme RORORO build`.
   Verify: Run `xcodebuild -project App/RORORO.xcodeproj -scheme RORORO build 2>&1 | tail -5`. Expect `** BUILD SUCCEEDED **`.
 
-- [ ] **2. WindowLayoutPlanner — auto-grid math (TDD)**
+- [x] **2. WindowLayoutPlanner — auto-grid math (TDD)**
   Spec ref: `superpowers/specs/2026-05-09-window-layout-tool-design.md > §4.1 Component map > WindowLayoutPlanner` and `decisions/0005-window-layout-tool.md > Decision 4 — Auto-grid algorithm`.
   What to build: Create `App/RORORO/Domain/WindowLayout/WindowLayoutPlanner.swift` (pure value type, no AppKit) with `static func plan(mode:pids:visibleRect:currentFrames:) -> [pid_t: CGRect]`. Implement `.autoGrid` and `.grid(cols:rows:)` via row-major fill with `ceil(sqrt(N))` packing. Stub `.shrink` (added in item 4). Create `App/ROROROTests/WindowLayoutPlannerTests.swift` and write the 7 auto-grid tests (N=1, 2, 3, 4, 5, 9, empty, plus visible-rect-origin). Full code in implementation plan task 2.
   Acceptance: All 7 auto-grid tests pass. Stable userId-sorted ordering (running same plan twice yields identical output). N=0 yields empty plan.
   Verify: Run `xcodebuild -project App/RORORO.xcodeproj -scheme RORORO test -destination 'platform=macOS,arch=x86_64' -only-testing:ROROROTests/WindowLayoutPlannerTests 2>&1 | tail -10`. Expect 7 tests passed, 0 failed.
 
-- [ ] **3. WindowLayoutPlanner — explicit grid tests**
+- [x] **3. WindowLayoutPlanner — explicit grid tests**
   Spec ref: `superpowers/specs/2026-05-09-window-layout-tool-design.md > §7.1 Unit tests > Explicit grid`.
   What to build: Append 5 explicit-grid tests to `App/ROROROTests/WindowLayoutPlannerTests.swift`: 3×3 with N=5 fills row-major, 1×N row stretches across, N×1 column stacks vertically, 2×2 with N=5 drops the overflow pid, stable-sort determinism. The implementation already covers `.grid` from item 2 — this item is test-only. Full test bodies in implementation plan task 3.
   Acceptance: All 5 explicit-grid tests pass; 12 total planner tests passing.
   Verify: Run `xcodebuild ... test -only-testing:ROROROTests/WindowLayoutPlannerTests 2>&1 | tail -10`. Expect 12 tests passed.
 
-- [ ] **4. WindowLayoutPlanner — shrink mode + tests**
+- [x] **4. WindowLayoutPlanner — shrink mode + tests**
   Spec ref: `decisions/0005-window-layout-tool.md > Decision 5 — Shrink anchor` and `superpowers/specs/2026-05-09-window-layout-tool-design.md > §7.1 Unit tests > Shrink`.
   What to build: Implement `.shrink(percent:)` in `WindowLayoutPlanner` — anchor on each window's current center, scale width × height by `percent`. Append 5 shrink tests: 50% preserves center (table-driven exact CGRect assertion), 25% quarter-size, 100% no-op, pid without current frame is dropped, multiple windows each preserve own center. Full code in implementation plan task 4.
   Acceptance: All 5 shrink tests pass; 17 total planner tests passing. Center-anchored math verified against the canonical example (200,100,1280,720) → 50% → (520,280,640,360).
