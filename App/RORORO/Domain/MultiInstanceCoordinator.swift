@@ -173,6 +173,17 @@ public final class MultiInstanceCoordinator {
     public func handleIncomingURL(_ url: URL, displayLabel: String? = nil, userId: String? = nil) {
         let enabled = MultiInstanceState.shared.enabled
         let semaphoreName = RobloxCompatStore.shared.currentSemaphoreName()
+        // External URL handoffs (`.onOpenURL` from a browser "Play" click,
+        // another app, etc.) arrive here with userId == nil. RobloxLauncher.
+        // launch already wrote FFlags + per-account framerate cap before
+        // calling this method, so on that path we leave the writers alone.
+        // On external handoffs we apply global settings so low-resource
+        // mode + user-set FFlags + the global framerate cap still take
+        // effect. Per-account overrides require the Launch As path.
+        if userId == nil {
+            let snapshot = LaunchSettingsStore.shared.snapshot()
+            RobloxLauncher.applyGlobalLaunchSettings(snapshot: snapshot)
+        }
         let request = LaunchRequest(
             url: url,
             enabled: enabled,

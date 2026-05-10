@@ -17,12 +17,23 @@
 // Threading: bootIfNeeded() is @MainActor — Sparkle's controller must be
 // constructed on main. Reads of `controller` / `updater` are also
 // main-thread by contract; SwiftUI surfaces are already on main.
+//
+// SwiftUI sheet trap: when the user clicks "Install and Relaunch" in
+// Sparkle's update window, Sparkle calls `NSApp.terminate`. A presented
+// SwiftUI sheet (Settings / Diagnostics / Games / Add Account) blocks
+// termination — the click silently no-ops until the user manually
+// closes the sheet. Fix: act as `SPUUpdaterDelegate`, observe
+// `didFindValidUpdate:`, publish `hasUpdateAvailable = true`, and
+// ContentView dismisses all open sheets the moment Sparkle decides
+// there's an update (BEFORE its window appears). Subsequent updates
+// re-fire because ContentView calls `acknowledgeUpdateAvailable()`
+// after dismissing.
 
 import Foundation
 import Sparkle
 
 @MainActor
-final class UpdaterHost {
+final class UpdaterHost: NSObject, ObservableObject, SPUUpdaterDelegate {
 
     static let shared = UpdaterHost()
 
@@ -32,7 +43,12 @@ final class UpdaterHost {
     /// Convenience: the underlying SPUUpdater, or nil pre-boot.
     var updater: SPUUpdater? { controller?.updater }
 
-    private init() {}
+    /// Sparkle has found a valid update and is about to show its window.
+    /// SwiftUI surfaces observe this and dismiss any open sheets so the
+    /// upcoming "Install and Relaunch" terminate isn't blocked.
+    @Published private(set) var hasUpdateAvailable: Bool = false
+
+    private override init() { super.init() }
 
     /// Construct the updater controller exactly once.
     ///
@@ -47,8 +63,21 @@ final class UpdaterHost {
         guard controller == nil else { return }
         controller = SPUStandardUpdaterController(
             startingUpdater: true,
-            updaterDelegate: nil,
+            updaterDelegate: self,
             userDriverDelegate: nil
         )
+    }
+
+    /// Called by ContentView after it has dismissed open sheets in
+    /// response to `hasUpdateAvailable`. Resets the flag so the next
+    /// update check re-fires the dismiss path.
+    func acknowledgeUpdateAvailable() {
+        hasUpdateAvailable = false
+    }
+
+    // MARK: - SPUUpdaterDelegate
+
+    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        hasUpdateAvailable = true
     }
 }

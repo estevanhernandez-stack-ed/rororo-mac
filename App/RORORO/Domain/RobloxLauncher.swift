@@ -126,6 +126,19 @@ public final class RobloxLauncher {
     /// nil at both levels means no XML write.
     public static func applyLaunchSettings(snapshot: LaunchSettingsStore.Snapshot, account: Account) {
         let effectiveCap = account.framerateCapOverride ?? snapshot.framerateCap
+        applyLaunchSettings(snapshot: snapshot, effectiveCap: effectiveCap)
+    }
+
+    /// Variant for external URL handoffs (`.onOpenURL` → coordinator) where
+    /// no account context is available. Applies globals only — global
+    /// framerate cap + global FFlag bundle (low-resource + user-set). Per-
+    /// account overrides can't apply on this path; users wanting them must
+    /// launch via "Launch As" so an account is bound.
+    public static func applyGlobalLaunchSettings(snapshot: LaunchSettingsStore.Snapshot) {
+        applyLaunchSettings(snapshot: snapshot, effectiveCap: snapshot.framerateCap)
+    }
+
+    private static func applyLaunchSettings(snapshot: LaunchSettingsStore.Snapshot, effectiveCap: Int?) {
         if let effectiveCap {
             do {
                 try GlobalSettingsWriter.setFramerateCap(effectiveCap)
@@ -142,9 +155,18 @@ public final class RobloxLauncher {
         if !effectiveFlags.isEmpty {
             let payload: [String: Any] = effectiveFlags.mapValues { $0.jsonObject }
             do {
-                _ = try ClientSettingsWriter.write(flags: payload)
+                let outcome = try ClientSettingsWriter.write(flags: payload)
                 if snapshot.lowResourceMode {
                     NSLog("[RORORO] launch: low-resource mode active (\(effectiveFlags.count) fflags written)")
+                }
+                let recorded = LastAppliedFFlagsStore.Snapshot(
+                    appliedAt: Date(),
+                    lowResourceMode: snapshot.lowResourceMode,
+                    flags: effectiveFlags,
+                    outcome: String(describing: outcome)
+                )
+                Task { @MainActor in
+                    LastAppliedFFlagsStore.shared.record(recorded)
                 }
             } catch {
                 NSLog("[RORORO] ClientSettingsWriter failed: \(error)")

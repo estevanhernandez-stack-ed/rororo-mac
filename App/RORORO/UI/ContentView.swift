@@ -12,6 +12,12 @@ struct ContentView: View {
     @State private var showAbout = false
     @State private var showGames = false
 
+    /// Observed so we can dismiss every open sheet the moment Sparkle
+    /// decides there's a valid update — a presented SwiftUI sheet
+    /// blocks `NSApp.terminate`, which Sparkle calls on
+    /// "Install and Relaunch". See UpdaterHost for the full trap note.
+    @ObservedObject private var updaterHost = UpdaterHost.shared
+
     var body: some View {
         AccountsListView(showAddAccount: $showAddAccount, showGames: $showGames)
             .toolbar {
@@ -69,6 +75,18 @@ struct ContentView: View {
                     .frame(width: 420, height: 420)
             }
             .background(Theme.Color.bgPage)
+            .onChange(of: updaterHost.hasUpdateAvailable) { _, newValue in
+                guard newValue else { return }
+                // Dismiss every sheet so Sparkle's update window has a
+                // clean main window to terminate against. Order doesn't
+                // matter — they're independent state bindings.
+                showSettings = false
+                showDiagnostics = false
+                showGames = false
+                showAddAccount = false
+                showAbout = false
+                updaterHost.acknowledgeUpdateAvailable()
+            }
     }
 
     private var multiInstanceToggle: some View {

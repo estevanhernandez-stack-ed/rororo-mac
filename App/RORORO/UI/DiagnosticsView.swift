@@ -13,9 +13,10 @@ struct DiagnosticsView: View {
     private let robloxInstalled = FileManager.default.fileExists(atPath: RobloxAppCopier.robloxAppPath)
     @State private var copiedFlash = false
     @State private var bundleSavingError: String?
+    @State private var fflagStore = LastAppliedFFlagsStore.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("Diagnostics")
                     .font(Theme.Font.heading1)
@@ -31,6 +32,9 @@ struct DiagnosticsView: View {
                     .help("Save a .zip with logs + (cookie-free) state for bug reports.")
                 Button("Close") { isPresented = false }
             }
+            .padding(.horizontal, Theme.Spacing.lg)
+            .padding(.top, Theme.Spacing.lg)
+            .padding(.bottom, Theme.Spacing.md)
             .alert("Couldn't save bundle", isPresented: Binding(
                 get: { bundleSavingError != nil },
                 set: { _ in bundleSavingError = nil }
@@ -40,52 +44,113 @@ struct DiagnosticsView: View {
                 Text(bundleSavingError ?? "")
             }
 
-            section("Roblox Install") {
-                row("Path", value: RobloxAppCopier.robloxAppPath)
-                row("Found", value: robloxInstalled ? "Yes" : "No",
-                    color: robloxInstalled ? Theme.Color.stateOk : Theme.Color.stateDanger)
-            }
-
-            section("Multi-instance") {
-                let state = MultiInstanceState.shared
-                row("Enabled", value: state.enabled ? "Yes" : "No",
-                    color: state.enabled ? Theme.Color.stateOk : Theme.Color.fg3)
-                row("Successful launches this session", value: "\(state.instanceCount)")
-                row("URL scheme handler", value: URLSchemeHandler.shared.isClaimed ? "Claimed by RORORO" : "Not claimed")
-                if let error = state.lastError {
-                    Text("Last error")
-                        .font(Theme.Font.monoMicro)
-                        .foregroundStyle(Theme.Color.fg3)
-                    ScrollView(.vertical) {
-                        Text(error)
-                            .font(Theme.Font.mono)
-                            .foregroundStyle(Theme.Color.stateDanger)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .textSelection(.enabled)
+            ScrollView {
+                VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+                    section("Roblox Install") {
+                        row("Path", value: RobloxAppCopier.robloxAppPath)
+                        row("Found", value: robloxInstalled ? "Yes" : "No",
+                            color: robloxInstalled ? Theme.Color.stateOk : Theme.Color.stateDanger)
                     }
-                    .frame(maxHeight: 160)
-                    .padding(Theme.Spacing.sm)
-                    .background(Theme.Color.bgRaised, in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
-                }
-            }
 
-            section("Roblox Internals") {
-                let store = RobloxCompatStore.shared
-                row("Effective semaphore", value: store.currentSemaphoreName())
-                row("Compat feed", value: store.freshness())
-                if let err = store.lastFetchError {
-                    row("Compat fetch error", value: err, color: Theme.Color.stateWarn)
+                    section("Multi-instance") {
+                        let state = MultiInstanceState.shared
+                        row("Enabled", value: state.enabled ? "Yes" : "No",
+                            color: state.enabled ? Theme.Color.stateOk : Theme.Color.fg3)
+                        row("Successful launches this session", value: "\(state.instanceCount)")
+                        row("URL scheme handler", value: URLSchemeHandler.shared.isClaimed ? "Claimed by RORORO" : "Not claimed")
+                        if let error = state.lastError {
+                            Text("Last error")
+                                .font(Theme.Font.monoMicro)
+                                .foregroundStyle(Theme.Color.fg3)
+                            ScrollView(.vertical) {
+                                Text(error)
+                                    .font(Theme.Font.mono)
+                                    .foregroundStyle(Theme.Color.stateDanger)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .textSelection(.enabled)
+                            }
+                            .frame(maxHeight: 160)
+                            .padding(Theme.Spacing.sm)
+                            .background(Theme.Color.bgRaised, in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
+                        }
+                    }
+
+                    fflagsSection
+
+                    section("Roblox Internals") {
+                        let store = RobloxCompatStore.shared
+                        row("Effective semaphore", value: store.currentSemaphoreName())
+                        row("Compat feed", value: store.freshness())
+                        if let err = store.lastFetchError {
+                            row("Compat fetch error", value: err, color: Theme.Color.stateWarn)
+                        }
+                        Text("Semaphore name comes from the remote roblox-compat.json feed (5-min TTL). If the feed is unreachable, the app falls back to its built-in default. Surface this to verify a future Roblox rename has been picked up.")
+                            .font(Theme.Font.bodySmall)
+                            .foregroundStyle(Theme.Color.fg3)
+                    }
                 }
-                Text("Semaphore name comes from the remote roblox-compat.json feed (5-min TTL). If the feed is unreachable, the app falls back to its built-in default. Surface this to verify a future Roblox rename has been picked up.")
+                .padding(.horizontal, Theme.Spacing.lg)
+                .padding(.bottom, Theme.Spacing.lg)
+            }
+        }
+        .background(Theme.Color.bgPage)
+    }
+
+    /// FFlags-as-written for the most recent launch. The on-disk
+    /// ClientAppSettings.json is gone after Roblox exits (writer cleans
+    /// it up on process termination — Heisenbug avoidance), so this is
+    /// the only post-run record. Hyperion may silently no-op individual
+    /// flags at the engine layer; this surface shows what we WROTE, not
+    /// what the engine ACCEPTED.
+    @ViewBuilder
+    private var fflagsSection: some View {
+        section("FFlags (last applied)") {
+            if let snap = fflagStore.lastSnapshot {
+                row("Applied at", value: formattedTimestamp(snap.appliedAt))
+                row("Low-resource mode", value: snap.lowResourceMode ? "ON" : "OFF",
+                    color: snap.lowResourceMode ? Theme.Color.stateOk : Theme.Color.fg3)
+                row("Flags written", value: "\(snap.flags.count)")
+                row("Writer outcome", value: snap.outcome,
+                    color: snap.outcome.contains("userHandEdited") ? Theme.Color.stateWarn : Theme.Color.fg1)
+                ScrollView(.vertical) {
+                    Text(prettyJSON(snap.flags))
+                        .font(Theme.Font.mono)
+                        .foregroundStyle(Theme.Color.fg2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+                .frame(maxHeight: 200)
+                .padding(Theme.Spacing.sm)
+                .background(Theme.Color.bgRaised, in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
+                Text("Hyperion may silently no-op some entries at runtime — bench actual deltas in Activity Monitor + check ~/Library/Logs/Roblox/*.log to confirm what landed.")
+                    .font(Theme.Font.bodySmall)
+                    .foregroundStyle(Theme.Color.fg3)
+            } else {
+                Text("No FFlags written yet. Launch an account with Low-resource mode ON (or any user-set FFlags) and the snapshot lands here.")
                     .font(Theme.Font.bodySmall)
                     .foregroundStyle(Theme.Color.fg3)
             }
-
-            Spacer()
         }
-        .padding(Theme.Spacing.lg)
-        .background(Theme.Color.bgPage)
+    }
+
+    private func formattedTimestamp(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .medium
+        return f.string(from: date)
+    }
+
+    private func prettyJSON(_ flags: [String: AnyCodableValue]) -> String {
+        let payload: [String: Any] = flags.mapValues { $0.jsonObject }
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: payload,
+            options: [.prettyPrinted, .sortedKeys]
+        ), let s = String(data: data, encoding: .utf8) else {
+            return "(failed to render)"
+        }
+        return s
     }
 
     @ViewBuilder
@@ -152,6 +217,17 @@ struct DiagnosticsView: View {
         lines.append("Singleton semaphore: \(SemaphoreBreaker.robloxSingletonSemaphoreName)")
         lines.append("Last error:")
         lines.append(state.lastError ?? "(none)")
+        lines.append("")
+        lines.append("--- FFlags (last applied) ---")
+        if let snap = fflagStore.lastSnapshot {
+            lines.append("Applied at: \(formattedTimestamp(snap.appliedAt))")
+            lines.append("Low-resource mode: \(snap.lowResourceMode ? "ON" : "OFF")")
+            lines.append("Flags written: \(snap.flags.count)")
+            lines.append("Writer outcome: \(snap.outcome)")
+            lines.append(prettyJSON(snap.flags))
+        } else {
+            lines.append("(none — no launch with FFlags has happened yet)")
+        }
         let body = lines.joined(separator: "\n")
 
         let pb = NSPasteboard.general
