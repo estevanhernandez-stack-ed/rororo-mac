@@ -26,7 +26,7 @@ final class AutoKeysCyclerTests: XCTestCase {
         }
     }
 
-    final class FakeWindowFocuser: WindowFocuser, @unchecked Sendable {
+    final class FakeWindowFocuser: WindowFocuser, FrontmostAppProvider, @unchecked Sendable {
         let lock = NSLock()
         private(set) var focused: [pid_t] = []
         var pidsToFail: Set<pid_t> = []
@@ -40,6 +40,16 @@ final class AutoKeysCyclerTests: XCTestCase {
         func snapshot() -> [pid_t] {
             lock.lock(); defer { lock.unlock() }
             return focused
+        }
+        // D-1: the post-fire focus-theft check asks "is `target.pid`
+        // still frontmost?" Production reads NSWorkspace; the fake
+        // returns whatever pid we just "focused" so the check always
+        // passes for tests that don't deliberately simulate focus theft.
+        // Tests that DO simulate theft can manipulate `focused` directly
+        // or wrap with a different provider.
+        func currentFrontmostPid() async -> pid_t? {
+            lock.lock(); defer { lock.unlock() }
+            return focused.last
         }
     }
 
@@ -95,14 +105,27 @@ final class AutoKeysCyclerTests: XCTestCase {
         focuser: WindowFocuser = FakeWindowFocuser(),
         assertion: PowerAssertion = FakePowerAssertion(),
         sleeper: Sleeper = RecordingSleeper(),
-        safety: AutoKeysSafetyMonitor? = nil
+        safety: AutoKeysSafetyMonitor? = nil,
+        frontmostAppProvider: FrontmostAppProvider? = nil
     ) -> AutoKeysCycler {
-        AutoKeysCycler(
+        let provider: FrontmostAppProvider
+        if let explicit = frontmostAppProvider {
+            provider = explicit
+        } else if let fakeFocuser = focuser as? FrontmostAppProvider {
+            // FakeWindowFocuser doubles as FrontmostAppProvider so the
+            // D-1 post-fire focus check passes with whatever pid the
+            // fake just "focused."
+            provider = fakeFocuser
+        } else {
+            provider = NSWorkspaceFrontmostAppProvider()
+        }
+        return AutoKeysCycler(
             poster: poster,
             focuser: focuser,
             assertion: assertion,
             sleeper: sleeper,
-            safety: safety
+            safety: safety,
+            frontmostAppProvider: provider
         )
     }
 
@@ -432,6 +455,89 @@ final class AutoKeysCyclerTests: XCTestCase {
             // ok
         } else {
             XCTFail("Expected .running after resume, got \(resumedState)")
+        }
+
+        await cycler.stop()
+    }
+
+    func testFocusStolen_PausesWithoutAutoResume() async throws {
+        let poster = FakeKeyEventPoster()
+        let focuser = FakeWindowFocuser()
+        let assertion = FakePowerAssertion()
+        let sleeper = RecordingSleeper()
+        let tapping = FakeEventTapping()
+        let activation = FakeWorkspaceActivationObserver()
+        // Tracker pre-populated with our test pid so 100 counts as
+        // "tracked" — the focus-theft from pid 999 below is NOT tracked
+        // and should fire.
+        let provider = FakeAXRectProvider()
+        provider.setRect(CGRect(x: 0, y: 0, width: 10, height: 10), for: 100)
+        let tracker = WindowRectTracker(provider: provider)
+        await tracker.refresh(pid: 100)
+
+        let safety = AutoKeysSafetyMonitor(
+            tapping: tapping,
+            config: AutoKeysSafetyConfig(
+                killKeyCode: 80,
+                gesture: .holdFor(seconds: 1),
+                resumeGrace: 0.1  // short, so we can prove non-resume
+            ),
+            tracker: tracker,
+            activationObserver: activation
+        )
+        let cycler = makeCycler(
+            poster: poster,
+            focuser: focuser,
+            assertion: assertion,
+            sleeper: sleeper,
+            safety: safety
+        )
+        await safety.start()
+
+        let seq = AutoKeysSequence(steps: [AutoKeysStep(keyCode: 49, delayAfter: 0.001)])!
+        try await cycler.start(
+            accounts: [.init(pid: 100, sequence: seq, label: "A")],
+            loopDelay: 0.01
+        )
+
+        // Wait for the loop to fire at least once.
+        await waitFor { poster.snapshot().count >= 1 }
+
+        // Simulate Safari (pid 999) becoming frontmost.
+        activation.fire(pid: 999)
+
+        // Wait until the cycler reflects the paused state with focusStolen.
+        await waitFor {
+            if case .paused(AutoKeysCycler.PauseReason.focusStolen(byPid: 999), _) = await cycler.state {
+                return true
+            }
+            return false
+        }
+
+        let pausedState = await cycler.state
+        guard case .paused(.focusStolen(byPid: 999), let until) = pausedState else {
+            XCTFail("Expected .paused(.focusStolen(999)), got \(pausedState)")
+            await cycler.stop()
+            return
+        }
+        XCTAssertNil(until, "focusStolen must have no auto-resume deadline")
+
+        // Sleep for >5x resumeGrace and confirm STILL paused (no auto-resume).
+        try await Task.sleep(nanoseconds: 600_000_000)  // 600ms > 5 * 100ms
+        let stateAfterGrace = await cycler.state
+        if case .paused(.focusStolen, _) = stateAfterGrace {
+            // ok — no auto-resume happened
+        } else {
+            XCTFail("focusStolen pause must NOT auto-resume; got \(stateAfterGrace)")
+        }
+
+        // Explicit resume() should transition back to .running.
+        await cycler.resume()
+        let resumedState = await cycler.state
+        if case .running = resumedState {
+            // ok
+        } else {
+            XCTFail("Expected .running after explicit resume, got \(resumedState)")
         }
 
         await cycler.stop()

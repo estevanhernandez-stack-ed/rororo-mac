@@ -13,6 +13,7 @@
 // dropped without emit — they're our own posted keystrokes coming back
 // up through the global monitor.
 
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -26,11 +27,19 @@ public actor AutoKeysSafetyMonitor {
     /// subscribers each receive every event.
     public static let shared = AutoKeysSafetyMonitor(
         tapping: NSEventTapping(),
-        config: .default
+        config: .default,
+        tracker: WindowRectTracker.shared,
+        activationObserver: NSWorkspaceActivationObserver()
     )
 
     private let tapping: EventTapping
     private var config: AutoKeysSafetyConfig
+    /// D-2: cursor-in-tracked-rect gating for `.mouseMoved` events.
+    /// nil → legacy behavior (every mouseMoved engages).
+    private let tracker: WindowRectTracker?
+    /// D-2: focus-theft observer. nil → no focus-theft events ever fire.
+    private let activationObserver: WorkspaceActivationObserver?
+    private var activationCancellable: WorkspaceActivationCancellable?
     private var subscriptionTask: Task<Void, Never>?
     private var continuations: [UUID: AsyncStream<EngagementEvent>.Continuation] = [:]
 
@@ -40,10 +49,14 @@ public actor AutoKeysSafetyMonitor {
 
     public init(
         tapping: EventTapping,
-        config: AutoKeysSafetyConfig = .default
+        config: AutoKeysSafetyConfig = .default,
+        tracker: WindowRectTracker? = nil,
+        activationObserver: WorkspaceActivationObserver? = nil
     ) {
         self.tapping = tapping
         self.config = config
+        self.tracker = tracker
+        self.activationObserver = activationObserver
     }
 
     /// Begin watching events. Subsequent calls to `start` while already
@@ -59,12 +72,21 @@ public actor AutoKeysSafetyMonitor {
                 if Task.isCancelled { return }
             }
         }
+        // D-2: subscribe to "app became frontmost" notifications for
+        // focus-theft detection. The handler dispatches into the actor
+        // so the broadcast happens with consistent isolation.
+        activationCancellable?.cancel()
+        activationCancellable = activationObserver?.observe { [weak self] pid in
+            Task { await self?.handleAppActivation(pid: pid) }
+        }
     }
 
     public func stop() {
         subscriptionTask?.cancel()
         subscriptionTask = nil
         tapping.stop()
+        activationCancellable?.cancel()
+        activationCancellable = nil
         holdTimer?.cancel()
         holdTimer = nil
         lastKillTap = nil
@@ -104,6 +126,17 @@ public actor AutoKeysSafetyMonitor {
 
         switch event.kind {
         case .mouseMoved:
+            // D-2: gate on cursor-in-tracked-rect. If the cursor is
+            // inside one of the Roblox windows we're cycling, the user
+            // is actively playing in-window — don't pause. Coord-system
+            // flip: NSEvent.mouseLocation returns bottom-left origin,
+            // AX rects (the tracker's contents) are top-left origin.
+            if let tracker {
+                let flipped = await Self.cursorTopLeftOrigin()
+                if let flipped, await tracker.contains(point: flipped) != nil {
+                    return  // cursor inside a tracked window — no engage
+                }
+            }
             broadcast(.userEngaged)
 
         case .keyDown(let keyCode):
@@ -188,5 +221,35 @@ public actor AutoKeysSafetyMonitor {
 
     private func removeContinuation(_ id: UUID) {
         continuations[id] = nil
+    }
+
+    // MARK: - D-2 focus-theft handler
+
+    /// Called by the workspace activation observer when any app becomes
+    /// frontmost. Emits `.focusStolen(byPid:)` iff the activated pid is
+    /// neither RORORO itself nor any pid the cycler is currently
+    /// cycling. RORORO and tracked Roblox windows are expected
+    /// foreground states; everything else is theft.
+    private func handleAppActivation(pid: pid_t) async {
+        let ownPid = getpid()
+        if pid == ownPid { return }
+        guard let tracker else { return }
+        let tracked = await tracker.currentPids()
+        if tracked.contains(pid) { return }
+        NSLog("[RORORO] safety: focus stolen by pid=\(pid) (not tracked)")
+        broadcast(.focusStolen(byPid: pid))
+    }
+
+    /// Read the current cursor position in top-left-origin screen coords
+    /// (the same coord system the rect tracker stores AX rects in).
+    /// Returns nil if no main screen is available (extremely rare; only
+    /// during early boot or display-disconnect transitions).
+    private static func cursorTopLeftOrigin() async -> CGPoint? {
+        await MainActor.run {
+            guard let screen = NSScreen.main else { return nil as CGPoint? }
+            let cursor = NSEvent.mouseLocation  // bottom-left origin
+            let flipped = CGPoint(x: cursor.x, y: screen.frame.height - cursor.y)
+            return flipped
+        }
     }
 }

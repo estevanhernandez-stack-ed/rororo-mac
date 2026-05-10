@@ -9,6 +9,32 @@ import XCTest
 import CoreGraphics
 @testable import RORORO
 
+/// D-2 fake — drives focus-theft event delivery into the safety monitor
+/// without going through AppKit's notification system. Module-internal
+/// so AutoKeysCyclerTests can use it too.
+final class FakeWorkspaceActivationObserver: WorkspaceActivationObserver, @unchecked Sendable {
+    let lock = NSLock()
+    private var handler: (@Sendable (pid_t) -> Void)?
+
+    func observe(_ handler: @escaping @Sendable (pid_t) -> Void) -> WorkspaceActivationCancellable {
+        lock.lock(); defer { lock.unlock() }
+        self.handler = handler
+        return WorkspaceActivationCancellable { [weak self] in
+            guard let self else { return }
+            self.lock.lock(); defer { self.lock.unlock() }
+            self.handler = nil
+        }
+    }
+
+    /// Synthesize an "app became frontmost" event with the given pid.
+    func fire(pid: pid_t) {
+        lock.lock()
+        let h = handler
+        lock.unlock()
+        h?(pid)
+    }
+}
+
 /// Module-internal so AutoKeysCyclerTests can drive the safety integration
 /// with synthesized events too.
 final class FakeEventTapping: EventTapping, @unchecked Sendable {
@@ -244,5 +270,109 @@ final class AutoKeysSafetyMonitorTests: XCTestCase {
         XCTAssertEqual(first, .userEngaged, "Only the sentinel mouseMoved should appear; the kill-key taps should have produced nothing.")
 
         await monitor.stop()
+    }
+
+    // MARK: - D-2 focus-theft tests
+
+    func testActivation_UntrackedPidNotOwnPid_BroadcastsFocusStolen() async throws {
+        let tapping = FakeEventTapping()
+        let provider = FakeAXRectProvider()
+        provider.setRect(CGRect(x: 0, y: 0, width: 10, height: 10), for: 100)
+        let tracker = WindowRectTracker(provider: provider)
+        await tracker.refresh(pid: 100)
+        let activation = FakeWorkspaceActivationObserver()
+        let monitor = AutoKeysSafetyMonitor(
+            tapping: tapping,
+            tracker: tracker,
+            activationObserver: activation
+        )
+        await monitor.start()
+        let stream = await monitor.observe()
+
+        // Pid 999 is neither RORORO (whatever getpid() is in test) nor
+        // tracked (100 is the only tracked pid). Should broadcast.
+        activation.fire(pid: 999)
+
+        let events = await collect(stream, count: 1, timeout: 1.0)
+        XCTAssertEqual(events, [.focusStolen(byPid: 999)])
+
+        await monitor.stop()
+    }
+
+    func testActivation_TrackedPid_DoesNotBroadcast() async throws {
+        let tapping = FakeEventTapping()
+        let provider = FakeAXRectProvider()
+        provider.setRect(CGRect(x: 0, y: 0, width: 10, height: 10), for: 100)
+        let tracker = WindowRectTracker(provider: provider)
+        await tracker.refresh(pid: 100)
+        let activation = FakeWorkspaceActivationObserver()
+        let monitor = AutoKeysSafetyMonitor(
+            tapping: tapping,
+            tracker: tracker,
+            activationObserver: activation
+        )
+        await monitor.start()
+        let stream = await monitor.observe()
+
+        // Pid 100 IS tracked — moving focus between Roblox windows is
+        // normal during a cycle. Should NOT broadcast.
+        activation.fire(pid: 100)
+
+        // Sentinel: send a mouseMoved (with no tracker rect at the
+        // current cursor position; this test doesn't control cursor
+        // location) to confirm focusStolen wasn't queued.
+        try await Task.sleep(nanoseconds: 100_000_000)
+        tapping.send(TappedEvent(kind: .mouseMoved, timestamp: Date(), isSelfTagged: false))
+        var iterator = stream.makeAsyncIterator()
+        let first = await iterator.next()
+        // First event should be the sentinel mouseMoved → userEngaged
+        // (unless the cursor happens to be inside the dummy 10x10 rect
+        // at 0,0 which is virtually impossible). NOT focusStolen.
+        XCTAssertNotEqual(first, .focusStolen(byPid: 100), "Activation of tracked pid must not broadcast focusStolen")
+
+        await monitor.stop()
+    }
+
+    func testActivation_OwnPid_DoesNotBroadcast() async throws {
+        let tapping = FakeEventTapping()
+        let provider = FakeAXRectProvider()
+        let tracker = WindowRectTracker(provider: provider)
+        let activation = FakeWorkspaceActivationObserver()
+        let monitor = AutoKeysSafetyMonitor(
+            tapping: tapping,
+            tracker: tracker,
+            activationObserver: activation
+        )
+        await monitor.start()
+        let stream = await monitor.observe()
+
+        // Fire activation with our own pid — must be ignored.
+        activation.fire(pid: getpid())
+
+        // Sentinel.
+        try await Task.sleep(nanoseconds: 100_000_000)
+        tapping.send(TappedEvent(kind: .mouseMoved, timestamp: Date(), isSelfTagged: false))
+        var iterator = stream.makeAsyncIterator()
+        let first = await iterator.next()
+        XCTAssertEqual(first, .userEngaged, "Own-pid activation must not broadcast focusStolen; sentinel mouseMoved should be first event")
+
+        await monitor.stop()
+    }
+
+    func testStop_CancelsActivationObserver() async {
+        let tapping = FakeEventTapping()
+        let activation = FakeWorkspaceActivationObserver()
+        let monitor = AutoKeysSafetyMonitor(
+            tapping: tapping,
+            activationObserver: activation
+        )
+
+        await monitor.start()
+        await monitor.stop()
+
+        // After stop, firing the activation observer should be a no-op
+        // (handler was nilled by the cancellable). We can't easily
+        // observe "no event" without a timeout, so just verify no crash.
+        activation.fire(pid: 999)
     }
 }

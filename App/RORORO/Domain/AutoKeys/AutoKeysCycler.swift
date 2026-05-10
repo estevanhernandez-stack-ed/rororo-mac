@@ -29,6 +29,7 @@
 // `.userEngaged` ─▶ pause with auto-resume after `safety.config.resumeGrace`
 // (extends on continued input). `.killRequested` ─▶ hard stop.
 
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -53,6 +54,12 @@ public actor AutoKeysCycler {
     public enum PauseReason: Equatable, Sendable {
         case userEngaged
         case userRequested
+        /// D-2: focus moved to an app outside our cycle (not RORORO,
+        /// not a tracked Roblox window). The cycler pauses without an
+        /// auto-resume deadline — user must press Play again or kill.
+        /// `byPid` is the pid of the app that took focus, surfaced in
+        /// the toolbar banner via `NSRunningApplication.localizedName`.
+        case focusStolen(byPid: pid_t)
     }
 
     public enum StartError: Error, Equatable {
@@ -80,7 +87,9 @@ public actor AutoKeysCycler {
         focuser: NSRunningApplicationFocuser(),
         assertion: IOPMPowerAssertion(),
         sleeper: TaskSleeper(),
-        safety: AutoKeysSafetyMonitor.shared
+        safety: AutoKeysSafetyMonitor.shared,
+        tracker: WindowRectTracker.shared,
+        frontmostAppProvider: NSWorkspaceFrontmostAppProvider()
     )
 
     private let poster: KeyEventPoster
@@ -91,6 +100,15 @@ public actor AutoKeysCycler {
     /// to skip safety integration entirely, OR pass a fake monitor with
     /// a fake `EventTapping` to drive engagement / kill events.
     private let safety: AutoKeysSafetyMonitor?
+    /// Optional — production wires the shared tracker. Refreshed on each
+    /// successful focus, queried by the safety monitor for D-2 mouse
+    /// gating + focus-theft detection. Tests can pass nil to skip the
+    /// rect substrate entirely.
+    private let tracker: WindowRectTracker?
+    /// D-1 post-fire focus-theft probe. Production reads
+    /// `NSWorkspace.frontmostApplication`; test fakes return whatever
+    /// pid the fake focuser most recently "focused" so the check passes.
+    private let frontmostAppProvider: FrontmostAppProvider
 
     public private(set) var state: State = .stopped(reason: nil)
     private var loopTask: Task<Void, Never>?
@@ -125,13 +143,17 @@ public actor AutoKeysCycler {
         focuser: WindowFocuser,
         assertion: PowerAssertion,
         sleeper: Sleeper,
-        safety: AutoKeysSafetyMonitor? = nil
+        safety: AutoKeysSafetyMonitor? = nil,
+        tracker: WindowRectTracker? = nil,
+        frontmostAppProvider: FrontmostAppProvider = NSWorkspaceFrontmostAppProvider()
     ) {
         self.poster = poster
         self.focuser = focuser
         self.assertion = assertion
         self.sleeper = sleeper
         self.safety = safety
+        self.tracker = tracker
+        self.frontmostAppProvider = frontmostAppProvider
     }
 
     // MARK: - Public API
@@ -259,6 +281,21 @@ public actor AutoKeysCycler {
             // cycler tore down first → state became .stopped(.userKilled)
             // → view-model saw .stopped → called play() → restart loop.
             return
+
+        case .focusStolen(let byPid):
+            // D-2: focus moved to an app we don't own and aren't
+            // cycling. Unlike `.userEngaged` (which auto-resumes after
+            // resumeGrace), focusStolen has no deadline — the user
+            // must explicitly resume. Rationale: a mouse twitch is a
+            // "nudge," focus theft is "where are we?" — auto-resuming
+            // mid-task-switch would surprise the user.
+            switch state {
+            case .running:
+                engagementDeadline = nil
+                updateState(.paused(reason: .focusStolen(byPid: byPid), until: nil))
+            case .stopped, .paused:
+                return
+            }
         }
     }
 
@@ -301,9 +338,17 @@ public actor AutoKeysCycler {
                     try await focuser.focus(pid: target.pid)
                 } catch {
                     NSLog("[RORORO] cycler: skipping pid=\(target.pid) (\(target.label ?? "?")): \(error)")
+                    // D-1: drop the dead pid from the rect cache so the
+                    // safety monitor doesn't keep gating mouseMoved
+                    // against a stale rect.
+                    await tracker?.forget(pid: target.pid)
                     continue
                 }
-                for step in target.sequence.steps {
+                // D-1: refresh the rect cache for this target. The
+                // safety monitor uses this to know whether mouseMoved
+                // is inside a Roblox window we're cycling.
+                await tracker?.refresh(pid: target.pid)
+                stepLoop: for step in target.sequence.steps {
                     if Task.isCancelled { return }
                     // Repeat-N support — fire the key `step.repeatCount`
                     // times back-to-back, with a fixed 0.7 s gap between
@@ -315,6 +360,17 @@ public actor AutoKeysCycler {
                         NSLog("[RORORO] cycler: posting keyCode=\(step.keyCode) (\(repeatIdx + 1)/\(step.repeatCount)) to pid=\(target.pid)")
                         progressCallback?(target.label, nextLabel, step.keyCode)
                         await poster.post(keyCode: step.keyCode)
+                        // D-1: post-fire focus-theft check. If the
+                        // frontmost pid changed between the focus call
+                        // and this post, the keystroke landed in the
+                        // wrong window. Abort the rest of this target's
+                        // sequence — the cycle continues with the next
+                        // target on the next outer iteration.
+                        let stillFront = await frontmostAppProvider.currentFrontmostPid()
+                        if stillFront != target.pid {
+                            NSLog("[RORORO] cycler: focus moved away from pid=\(target.pid) mid-sequence (now=\(stillFront ?? -1)) — aborting remaining steps for this target")
+                            break stepLoop
+                        }
                         // Inter-press gap (only between presses; the
                         // last one yields directly into delayAfter).
                         if repeatIdx < step.repeatCount - 1 {
@@ -364,6 +420,10 @@ public actor AutoKeysCycler {
             case .paused(.userRequested, _):
                 // No deadline — wait for an external resume/stop.
                 try? await sleeper.sleep(seconds: 0.25)
+            case .paused(.focusStolen, _):
+                // D-2: focus-theft pauses have no deadline either —
+                // user must explicitly resume. Poll until state changes.
+                try? await sleeper.sleep(seconds: 0.25)
             }
         }
     }
@@ -377,6 +437,10 @@ public actor AutoKeysCycler {
         // lifecycle and keeps it running so the kill-key-as-toggle
         // path can fire from `.stopped` to start the cycler again.
         assertion.release()
+        // D-1: drop the rect cache. The safety monitor's mouse gating
+        // defaults to "no tracked rect" when empty, restoring the
+        // legacy "any mouseMoved engages" behavior between cycles.
+        await tracker?.reset()
         engagementDeadline = nil
         currentPids = []
         updateState(.stopped(reason: reason))

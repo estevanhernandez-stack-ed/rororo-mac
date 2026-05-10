@@ -37,8 +37,20 @@ public struct NSRunningApplicationFocuser: WindowFocuser {
     /// Tunable; bump if Roblox is slow to settle on busy systems.
     public let settleDelay: TimeInterval
 
-    public init(settleDelay: TimeInterval = 0.500) {
+    /// Optional D-1 post-focus verifier. When non-nil, after the frontmost
+    /// poll confirms, we also verify via AX that the focused window is
+    /// the main window AND not minimized. If the check fails, we log +
+    /// proceed (don't bail) — the post-fire focus-theft check in
+    /// `AutoKeysCycler.runLoop` will catch the case where keystrokes
+    /// landed in the wrong window. Additive telemetry, no semantic change.
+    private let verifier: AXRectProvider?
+
+    public init(
+        settleDelay: TimeInterval = 0.500,
+        verifier: AXRectProvider? = AXUIElementRectProvider()
+    ) {
         self.settleDelay = settleDelay
+        self.verifier = verifier
     }
 
     public func focus(pid: pid_t) async throws {
@@ -113,6 +125,14 @@ public struct NSRunningApplicationFocuser: WindowFocuser {
             // listening gap. The user's first-iteration "didn't have
             // time to jump" came from this gap being too short.
             try? await Task.sleep(nanoseconds: 250_000_000)
+            // D-1: additionally verify the focused window is the main
+            // window and not minimized. The verifier returns nil when
+            // either check fails (or AX itself fails). We log + proceed
+            // — the post-fire focus check in AutoKeysCycler.runLoop
+            // catches misroutes that the verification couldn't predict.
+            if let verifier, verifier.focusedWindowRect(pid: pid) == nil {
+                NSLog("[RORORO] focuser: pid=\(pid) frontmost but AX could not read focused window rect (minimized / non-main / AX read failed) — proceeding anyway")
+            }
         } else {
             NSLog("[RORORO] focuser: pid=\(pid) did NOT become frontmost within \(settleDelay)s; proceeding anyway")
         }

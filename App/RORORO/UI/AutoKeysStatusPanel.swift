@@ -221,6 +221,7 @@ private struct AutoKeysStatusPanelView: View {
         case .running:                    return Theme.Color.stateOk
         case .paused(.userEngaged, _):    return Theme.Color.stateWarn
         case .paused(.userRequested, _):  return Theme.Color.stateInfo
+        case .paused(.focusStolen, _):    return Theme.Color.stateWarn
         }
     }
 
@@ -233,6 +234,9 @@ private struct AutoKeysStatusPanelView: View {
             return "Paused — mouse movement"
         case .paused(.userRequested, _):
             return "Paused"
+        case .paused(.focusStolen(let byPid), _):
+            let appName = NSRunningApplication(processIdentifier: byPid)?.localizedName ?? "another app"
+            return "Paused — \(appName) took focus"
         case .running:
             if let now = vm.currentTargetLabel {
                 if let key = vm.currentStepKeyName {

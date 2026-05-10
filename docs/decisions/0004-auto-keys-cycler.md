@@ -139,9 +139,22 @@ This ADR locks the model and the surface area before any code is written. The fe
 - **Per-account auto-start on launch.** Killed for v1 — doubles UI surface and creates a "running by accident" failure mode that's hard to undo. Manual Play keeps the user in the loop.
 - **Configurable simple-mode "spacebar every 15 min."** Folded into the general design — same outcome falls out of `[spacebar, 0]` + 14-min loop delay against one account.
 
+## Amendment — 2026-05-10 (Slope D, Waves 1+2)
+
+Decision 9's pause posture is refined by two new behaviors that ship in `docs/plans/d1-d2-smarter-cycler.md`:
+
+1. **Engagement pause now gates on cursor-in-window.** `mouseMoved` events with the cursor inside one of the cycled Roblox windows no longer broadcast `.userEngaged`. The cycler keeps firing while the user plays inside the game window. Movement outside any tracked window still pauses as before. Implementation: `WindowRectTracker` + cursor-in-rect check in `AutoKeysSafetyMonitor`.
+2. **Focus theft is a new pause reason.** When focus moves to an app that is neither RORORO nor one of the cycled Roblox windows (e.g., Safari, Mail), the cycler enters `.paused(.focusStolen(byPid:), until: nil)`. Unlike `.userEngaged`, focus-theft pauses do NOT auto-resume — the user must press Play (or use the kill gesture). Rationale: a mouse twitch is a "nudge," focus theft is "wait, where are we?" — surprising the user with an auto-resume mid-task-switch is worse than the extra click.
+
+Decision 1's keystroke-delivery posture also tightens via Wave D-1: the cycler now post-fire-verifies that the frontmost pid is still the target before continuing a sequence, and aborts the rest of the sequence for that target on theft. `WindowFocuser` additionally verifies the focused window matches main + isn't minimized (additive log only; no semantic change to error path).
+
+The hard rules don't move. Defensive + UX safety only. No anti-detection.
+
 ## References
 
 - Founding posture: `~/.claude/projects/-Users-estevanhernandez-projects-rororo-mac/memory/feedback_app_store_posture.md` (capability ambition + ethical clarity, App Store opt-out accepted).
 - Original Slope C scope (clicks): `~/.claude/projects/-Users-estevanhernandez-projects-rororo-mac/memory/project_next_feature_autoclicker.md` — superseded by this ADR.
 - Sibling ADR shape: `docs/decisions/0001-launch-settings-writers.md`.
 - Plan-of-record: `~/.claude/plans/plan-mac-native-woolly-pascal.md`.
+- Slope D waves 1+2 plan: `docs/plans/d1-d2-smarter-cycler.md`.
+- ADR 0007 (Draft) — Full-fidelity record-and-replay. Depends on `WindowRectTracker` from this slope.

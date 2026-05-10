@@ -136,6 +136,8 @@ final class TrayController: NSObject {
             return " ⏸"
         case .paused(.userRequested, _):
             return " ⏸"
+        case .paused(.focusStolen, _):
+            return " ⏸"
         }
     }
 

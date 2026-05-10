@@ -140,4 +140,10 @@ public enum EngagementEvent: Equatable, Sendable {
     /// second tap landed within the double-tap window). The cycler
     /// responds by stopping with `.stopped(.userKilled)`.
     case killRequested
+    /// D-2: another app (NOT RORORO, NOT a Roblox window we're cycling)
+    /// became frontmost. The cycler responds by pausing with
+    /// `.focusStolen(byPid:)` — no auto-resume, user must press Play
+    /// again. `byPid` is the pid of the app that took focus, used to
+    /// render "Paused — Safari took focus" in the toolbar banner.
+    case focusStolen(byPid: pid_t)
 }

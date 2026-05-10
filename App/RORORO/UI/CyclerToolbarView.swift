@@ -8,6 +8,7 @@
 // AutoKeysSafetySetupSheet first; only after that closes does the
 // cycler kick off.
 
+import AppKit
 import SwiftUI
 
 struct CyclerToolbarView: View {
@@ -235,10 +236,12 @@ struct CyclerToolbarView: View {
         // Red while running, amber when engagement-paused (so the user
         // sees a state hint), red when user-paused. All three present
         // the SAME tap action (stop), but the color carries the
-        // running-vs-paused distinction.
+        // running-vs-paused distinction. D-2: focusStolen also amber —
+        // warning state, user awareness needed.
         case .running:                    return Theme.Color.stateDanger
         case .paused(.userEngaged, _):    return Theme.Color.stateWarn
         case .paused(.userRequested, _):  return Theme.Color.stateDanger
+        case .paused(.focusStolen, _):    return Theme.Color.stateWarn
         }
     }
 
@@ -252,6 +255,9 @@ struct CyclerToolbarView: View {
             return "Cycler paused — mouse/keyboard activity detected. Will auto-resume in a moment. Click to STOP. To resume immediately, use your kill-key gesture."
         case .paused(.userRequested, _):
             return "Cycler is paused. Click to STOP. To resume, use your kill-key gesture."
+        case .paused(.focusStolen(let byPid), _):
+            let appName = NSRunningApplication(processIdentifier: byPid)?.localizedName ?? "another app"
+            return "Paused — \(appName) took focus. Click to STOP, or use your kill-key gesture to resume."
         }
     }
 
