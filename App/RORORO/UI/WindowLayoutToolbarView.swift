@@ -105,12 +105,24 @@ struct WindowLayoutToolbarView: View {
     @ViewBuilder
     private var shrinkSection: some View {
         Menu("Shrink") {
-            Button("25%") { /* P2 */ }.disabled(true)
-            Button("50%") { /* P2 */ }.disabled(true)
-            Button("75%") { /* P2 */ }.disabled(true)
-            Button("100% (restore)") { /* P2 */ }.disabled(true)
+            Button("25%") {
+                Task { await vm.applyShrink(percent: 0.25) }
+            }
+            .disabled(cyclerIsRunning)
+            Button("50%") {
+                Task { await vm.applyShrink(percent: 0.50) }
+            }
+            .disabled(cyclerIsRunning)
+            Button("75%") {
+                Task { await vm.applyShrink(percent: 0.75) }
+            }
+            .disabled(cyclerIsRunning)
+            Button("100% (restore)") {
+                Task { await vm.applyShrink(percent: 1.0) }
+            }
+            .disabled(cyclerIsRunning)
         }
-        .help("Coming soon — shrink presets land in P2.")
+        .help("Shrink each window proportionally around its current center.")
     }
 
     // MARK: - state
