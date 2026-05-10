@@ -106,11 +106,26 @@ public struct DefaultAXWindowManager: AXWindowManager {
             throw AXWindowManagerError.axCallFailed(code: max(posErr.rawValue, sizeErr.rawValue))
         }
         if sizeErr != .success {
-            // Surface the size-set failure as a distinct error type so
-            // WindowLayoutViewModel can produce a helpful "switch Roblox
-            // out of fullscreen" message instead of treating the window
-            // as fully successful.
             throw AXWindowManagerError.sizeSetRejected(pid: pid, fullScreen: isFullScreen)
+        }
+
+        // Silent-revert detection. Some apps (Roblox in particular)
+        // return `.success` from size-set but the actual window size
+        // doesn't change — either an internal min-size clamp or a
+        // render-pipeline-bound dimension that doesn't honor AX. Read
+        // the size back and compare; if it diverges from what we asked
+        // for by more than a few px (anti-rounding), surface it.
+        var actualSizeObj: AnyObject?
+        let readErr = AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &actualSizeObj)
+        if readErr == .success, let raw = actualSizeObj {
+            var actual = CGSize.zero
+            AXValueGetValue(raw as! AXValue, .cgSize, &actual)
+            let widthDelta = abs(actual.width - frame.size.width)
+            let heightDelta = abs(actual.height - frame.size.height)
+            if widthDelta > 5 || heightDelta > 5 {
+                NSLog("[RORORO] layout: pid=\(pid) size silently reverted — asked \(frame.size), got \(actual) fullscreen=\(isFullScreen)")
+                throw AXWindowManagerError.sizeSetRejected(pid: pid, fullScreen: isFullScreen)
+            }
         }
     }
 
