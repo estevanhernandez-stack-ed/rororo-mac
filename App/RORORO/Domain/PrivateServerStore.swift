@@ -64,7 +64,8 @@ public final class PrivateServerStore {
                 placeName: placeName,
                 thumbnailURL: thumbnailURL,
                 addedAt: existing.addedAt,
-                lastLaunchedAt: existing.lastLaunchedAt
+                lastLaunchedAt: existing.lastLaunchedAt,
+                isDefault: existing.isDefault
             )
             servers[idx] = updated
             save()

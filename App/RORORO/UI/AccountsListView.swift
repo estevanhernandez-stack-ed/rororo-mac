@@ -329,11 +329,9 @@ struct AccountsListView: View {
             existingGroups: existingGroups,
             onLaunchPrimary: { launchPrimary(account: account) },
             onPickFavorite: { game in
-                favoriteStore.setDefault(placeId: game.placeId)
                 launch(account: account, target: .place(placeId: game.placeId), savedServerId: nil)
             },
             onPickServer: { server in
-                serverStore.setDefault(id: server.id)
                 launch(
                     account: account,
                     target: .privateServer(
@@ -600,9 +598,9 @@ private struct AccountRow: View {
     /// sits on the same surface, distinguished by its glyph + smaller pad.
     /// Hairline outer border keeps it readable against the dark row surface.
     ///
-    /// Picking from the dropdown sets the chosen target as the new
-    /// cross-store default AND launches it — one click, persistent. The
-    /// banner + primary label both reflect the new default thereafter.
+    /// Picking from the dropdown launches the chosen target for THIS click
+    /// only. The default is sticky — it changes only via the explicit
+    /// "Set as default" button in the Games tab.
     private var splitLaunchButton: some View {
         HStack(spacing: 0) {
             Button(action: onLaunchPrimary) {
