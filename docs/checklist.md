@@ -66,7 +66,7 @@
   Acceptance: Toolbar order matches the spec's component map. Full test suite passes (no regressions in existing tests).
   Verify: Run `xcodebuild -project App/RORORO.xcodeproj -scheme RORORO test -destination 'platform=macOS,arch=x86_64' 2>&1 | tail -10`. Expect all existing tests + 17 planner tests passing.
 
-- [ ] **9. Manual acceptance + dashboard decision log**
+- [x] **9. Manual acceptance + dashboard decision log**
   Spec ref: `superpowers/specs/2026-05-09-window-layout-tool-design.md > §7.2 Integration / manual (P1 acceptance)` (steps 1–7) and `decisions/0005-window-layout-tool.md > Phasing > Phase 1`.
   What to build: This is a verification-only item — no source code is written. The orchestrator hands the eight acceptance steps to the builder (Este) and waits for confirmation: (1) launch app from Xcode, (2) verify toolbar layout (Multi-instance · Layout · Cycler · Games · Settings · More), (3) verify menu structure with no Roblox windows + alert on tile-with-zero-windows, (4) launch 4 RORORO accounts → Tile → Auto-grid → expect 2×2 fills active screen, (5) verify 3×3 / Row / Column / Auto-grid round trip, (6) verify cycler-state gating (Tile items disabled while cycler is `.running`), (7) verify multi-display behavior (drag RORORO to secondary display, tile on that display), (8) optional: verify TCC re-prompt path. After acceptance, log a 626 dashboard decision via `mcp__626Labs__manage_decisions log` titled "Window Layout Tool ships P1 (tile-only)" capturing: reused Accessibility TCC bucket → no new permission ask, AXWindowManager pattern ports from WindowFocuser, P1 valuable alone / P2 (shrink + custom) additive.
   Acceptance: All 8 manual steps pass. Dashboard decision logged with bound project ID.
