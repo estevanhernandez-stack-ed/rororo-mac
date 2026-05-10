@@ -14,11 +14,13 @@ struct SettingsView: View {
     @ObservedObject private var launchSettings = LaunchSettingsStore.shared
     @State private var framerateCapEnabled: Bool
     @State private var framerateCapValue: Int
+    @State private var lowResourceModeEnabled: Bool
 
     init() {
         let initialCap = LaunchSettingsStore.shared.framerateCap
         _framerateCapEnabled = State(initialValue: initialCap != nil)
         _framerateCapValue = State(initialValue: initialCap ?? 20)
+        _lowResourceModeEnabled = State(initialValue: LaunchSettingsStore.shared.lowResourceMode)
     }
 
     var body: some View {
@@ -71,6 +73,18 @@ struct SettingsView: View {
                 Text(framerateCapEnabled
                      ? "Roblox-wide cap. Every running instance is throttled at this rate uniformly — applied at next launch. Already-running instances keep their current cap until restart."
                      : "Default: Roblox uses its built-in 60 fps cap.")
+                    .font(Theme.Font.bodySmall)
+                    .foregroundStyle(Theme.Color.fg3)
+            }
+
+            section("Low-resource mode") {
+                Toggle("Inject low-resource FFlag bundle at launch", isOn: $lowResourceModeEnabled)
+                    .onChange(of: lowResourceModeEnabled) { _, newValue in
+                        launchSettings.setLowResourceMode(newValue)
+                    }
+                Text(lowResourceModeEnabled
+                     ? "ON: voxel lighting, post-FX off, no shadows/grass/wind, lowest texture quality, telemetry disabled. Cuts CPU + GPU + RAM for AFK / multi-instance grinding. User-set FFlags overlay on top so explicit overrides win. Hyperion may silently no-op some — bench actual deltas before trusting."
+                     : "Default: Roblox renders at the game's quality settings.")
                     .font(Theme.Font.bodySmall)
                     .foregroundStyle(Theme.Color.fg3)
             }

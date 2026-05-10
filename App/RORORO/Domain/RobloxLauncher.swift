@@ -133,10 +133,19 @@ public final class RobloxLauncher {
                 NSLog("[RORORO] GlobalSettingsWriter failed: \(error)")
             }
         }
-        if !snapshot.fflags.isEmpty {
-            let payload: [String: Any] = snapshot.fflags.mapValues { $0.jsonObject }
+        // Compute the effective fflag set: low-resource bundle (if on)
+        // merged with user-set fflags. User-set values overlay the bundle
+        // so explicit overrides survive enabling Low-resource mode.
+        let effectiveFlags = snapshot.lowResourceMode
+            ? LowResourceFFlags.merged(into: snapshot.fflags)
+            : snapshot.fflags
+        if !effectiveFlags.isEmpty {
+            let payload: [String: Any] = effectiveFlags.mapValues { $0.jsonObject }
             do {
                 _ = try ClientSettingsWriter.write(flags: payload)
+                if snapshot.lowResourceMode {
+                    NSLog("[RORORO] launch: low-resource mode active (\(effectiveFlags.count) fflags written)")
+                }
             } catch {
                 NSLog("[RORORO] ClientSettingsWriter failed: \(error)")
             }

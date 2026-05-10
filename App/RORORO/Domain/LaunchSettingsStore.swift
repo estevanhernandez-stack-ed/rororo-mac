@@ -26,6 +26,11 @@ public final class LaunchSettingsStore: ObservableObject {
 
     @Published public private(set) var framerateCap: Int?
     @Published public private(set) var fflags: [String: AnyCodableValue]
+    /// When true, the LowResourceFFlags bundle merges into `fflags` at
+    /// launch time (ADR 0006). User-set fflags overlay on top of the
+    /// bundle so explicit overrides win. Hyperion may silently no-op
+    /// some bundle entries — bench actual deltas before trusting.
+    @Published public private(set) var lowResourceMode: Bool
     /// Cycler loop delay in seconds (Slope C). The pause that the
     /// cycler observes between completing one full pass over all
     /// configured accounts and starting the next. Default `14 * 60`
@@ -80,10 +85,19 @@ public final class LaunchSettingsStore: ObservableObject {
             self.autoKeysSafety = .default
         }
         self.autoKeysStayAwakeMode = defaults.bool(forKey: Keys.autoKeysStayAwakeMode)
+        self.lowResourceMode = defaults.bool(forKey: Keys.lowResourceMode)
         // Clean up any leftover P2.5 launch-size key from prior testing.
         // P2.5 was retracted — StartScreenSize is not the lever Roblox
         // uses for its hardcoded 800x600 player window floor.
         defaults.removeObject(forKey: "rororo.launch.startScreenSize")
+    }
+
+    /// Toggle the LowResourceFFlags bundle on/off (ADR 0006). Persisted
+    /// across launches. The bundle merges into the user's fflag dict
+    /// at applyLaunchSettings time — user-set fflags win on overlap.
+    public func setLowResourceMode(_ on: Bool) {
+        lowResourceMode = on
+        defaults.set(on, forKey: Keys.lowResourceMode)
     }
 
     public func setFramerateCap(_ value: Int?) {
@@ -138,17 +152,19 @@ public final class LaunchSettingsStore: ObservableObject {
     /// launch time without holding a reference to the store on a non-main
     /// actor.
     public func snapshot() -> Snapshot {
-        Snapshot(framerateCap: framerateCap, fflags: fflags)
+        Snapshot(framerateCap: framerateCap, fflags: fflags, lowResourceMode: lowResourceMode)
     }
 
     public struct Snapshot: Sendable, Equatable {
         public let framerateCap: Int?
         public let fflags: [String: AnyCodableValue]
+        public let lowResourceMode: Bool
     }
 
     private enum Keys {
         static let framerateCap = "rororo.launch.framerateCap"
         static let fflags = "rororo.launch.fflags"
+        static let lowResourceMode = "rororo.launch.lowResourceMode"
         static let autoKeysLoopDelay = "rororo.autoKeys.loopDelay"
         static let autoKeysSafety = "rororo.autoKeys.safety"
         static let autoKeysStayAwakeMode = "rororo.autoKeys.stayAwakeMode"
