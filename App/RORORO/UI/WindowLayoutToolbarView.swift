@@ -14,6 +14,7 @@ struct WindowLayoutToolbarView: View {
 
     @State private var vm = WindowLayoutViewModel.shared
     @State private var cyclerVM = AutoKeysCyclerViewModel.shared
+    @ObservedObject private var launchStore = LaunchSettingsStore.shared
 
     var body: some View {
         Menu {
@@ -44,6 +45,8 @@ struct WindowLayoutToolbarView: View {
             tileSection
             Divider()
             shrinkSection
+            Divider()
+            launchSizeSection
             Divider()
             Button("Custom Size…") { /* P2 */ }
                 .disabled(true)
@@ -107,6 +110,36 @@ struct WindowLayoutToolbarView: View {
             }
             .disabled(cyclerIsRunning)
         }
+    }
+
+    @ViewBuilder
+    private var launchSizeSection: some View {
+        Menu("Launch size (next launch)") {
+            Button(launchSizeLabel(nil, label: "Default (don't override)")) {
+                launchStore.setStartScreenSize(nil)
+            }
+            Divider()
+            ForEach(Self.launchSizePresets, id: \.label) { preset in
+                Button(launchSizeLabel(preset.size, label: preset.label)) {
+                    launchStore.setStartScreenSize(preset.size)
+                }
+            }
+        }
+        .help("Sets Roblox's StartScreenSize for the NEXT launch. Lower than 800×600 lets the Shrink action go below Roblox's default render floor. Applies to RORORO-launched accounts only.")
+    }
+
+    private static let launchSizePresets: [(label: String, size: LaunchScreenSize)] = [
+        ("640 × 400", LaunchScreenSize(width: 640, height: 400)),
+        ("640 × 480", LaunchScreenSize(width: 640, height: 480)),
+        ("800 × 600  (Roblox default)", LaunchScreenSize(width: 800, height: 600)),
+        ("1024 × 768", LaunchScreenSize(width: 1024, height: 768)),
+        ("1280 × 720", LaunchScreenSize(width: 1280, height: 720)),
+    ]
+
+    private func launchSizeLabel(_ size: LaunchScreenSize?, label: String) -> String {
+        let current = launchStore.startScreenSize
+        let isCurrent = (size == nil && current == nil) || (size == current)
+        return isCurrent ? "✓ \(label)" : label
     }
 
     @ViewBuilder
