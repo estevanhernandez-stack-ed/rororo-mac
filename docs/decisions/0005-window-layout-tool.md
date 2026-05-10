@@ -63,13 +63,13 @@ These are the layouts users actually want. ceil(sqrt) is the standard tile-N for
 
 **Consequences:** N=3 has one empty cell; the user can drag the bottom-right Roblox window into it manually if they prefer 3-up. N=5 same. We don't auto-stretch the bottom row to fill — that introduces non-uniform cell sizes which look messy. Documented; trivial to add a "tight 3-up" preset later if requested.
 
-## Decision 5 — Shrink anchor: each window's current center
+## Decision 5 — Shrink anchor: each window's current center  [RETRACTED 2026-05-10]
 
-**Decision:** The Shrink mode (25/50/75/100%) scales each window around its own current center, not around screen center or screen origin. A window currently at `(x: 200, y: 100, w: 1280, h: 720)` shrunk to 50% becomes `(x: 520, y: 280, w: 640, h: 360)` — same center, half-size.
+> **Retracted in Decision 7.** Roblox's macOS player enforces a hardcoded ~800×600 window minimum that AX size-set silently rejects below. Shrink fundamentally cannot deliver value on Roblox; replaced by Cascade.
 
-**Rationale:** Preserves the user's manual arrangement. If they've already dragged windows into a layout that works, Shrink lets them just make everything proportionally smaller without disturbing the spatial relationships. Anchoring at screen origin would pile every window into the top-left corner; anchoring at screen center would crowd the center. Per-window center anchoring is the only mode that respects existing layout.
+**Original decision (preserved for context):** The Shrink mode (25/50/75/100%) scales each window around its own current center, not around screen center or screen origin. A window currently at `(x: 200, y: 100, w: 1280, h: 720)` shrunk to 50% becomes `(x: 520, y: 280, w: 640, h: 360)` — same center, half-size.
 
-**Consequences:** Windows can be shrunk into off-screen positions if their original center was near a screen edge. Acceptable — user can always tile to recover, or drag the window back. We do *not* clamp shrunk windows back onto-screen; that would re-introduce the "auto-rearrange" magic this decision avoids.
+**Original rationale (preserved):** Preserves the user's manual arrangement. If they've already dragged windows into a layout that works, Shrink lets them just make everything proportionally smaller without disturbing the spatial relationships. Anchoring at screen origin would pile every window into the top-left corner; anchoring at screen center would crowd the center. Per-window center anchoring is the only mode that respects existing layout.
 
 ## Decision 6 — Stateless: no remember-last-layout
 
@@ -78,6 +78,27 @@ These are the layouts users actually want. ceil(sqrt) is the standard tile-N for
 **Rationale:** It's an action, not a preference. The user picks a tile when they want one. Persistence is feature-bloat for a v1 — adds the "settings page entry," "what if the screen geometry changed since last save," and "how does it interact with multi-instance toggle on/off" questions. None of those have load-bearing answers in P1. Defer until demand surfaces.
 
 **Consequences:** Each session starts with whatever Roblox window sizes Roblox itself chose. User re-applies their preferred tile when they want it. If demand surfaces ("I always tile 2×2 — why doesn't it remember"), P3 adds a "default layout on launch" preference; the action skill stays exactly the same.
+
+## Decision 7 — Shrink retracted; Cascade added (2026-05-10)
+
+**Decision:** Remove the Shrink mode entirely from the toolbar, planner, and tests. Replace with Cascade — a position-only staircase arrangement. Also retract P2.5 (the StartScreenSize XML writer that was an attempt to lower the shrink floor at launch).
+
+**Rationale:** Empirical investigation during P1 manual acceptance surfaced that Roblox's macOS player binary enforces a hardcoded **~800×600 minimum window size**. The constraint is engine-level, not OS-level — verified three ways:
+
+1. **Direct AX test:** AX size-set with target below 800×600 returns `.success` but the window snaps back to 800×600. Console log: `asked (200, 157), got (800, 628)`.
+2. **Rectangle truth-test (MIT, [github.com/rxhanson/Rectangle](https://github.com/rxhanson/Rectangle)):** Same AX call surface as ours. Cannot shrink Roblox below the floor either. Confirmed not a RORORO implementation gap.
+3. **Moom truth-test (closed-source, commercial):** Same constraint. Engine-level, not toolkit-specific.
+
+**P2.5 retracted simultaneously:** The `StartScreenSize` XML field (`<Vector2 name="StartScreenSize">` in `GlobalBasicSettings_<N>.xml`) looked like a plausible launch-time lever — its default value (800, 600) matched the observed snap-back floor. RORORO wrote 640×480 to it; the file write succeeded, was confirmed on disk, and Roblox subsequently launched at... 800×600. The field doesn't control player window dimensions; it appears to be a Studio-only setting. P2.5 plumbing (writer + store field + launcher wire-in + UI submenu) all removed.
+
+**Cascade replaces Shrink:** The user's underlying ask was *better visibility into multiple grinding windows*. Shrink would've delivered that by making each window smaller. With shrink dead, Cascade delivers the same goal differently — staircase arrangement where every title bar peeks out from behind the previous window. Position-only operation, sidesteps the floor entirely. Each window keeps its current size; only positions move. Default offset (40, 40) per window; wraps to a new column at 200 px right when the stack exceeds the visible-rect height.
+
+**Consequences:**
+- The Layout menu's Shrink submenu and Custom Size item are gone. Tile submenu now ends with a Cascade item.
+- Users wanting smaller individual windows can drag-resize manually — the floor still applies, but at least there's no agent claiming it can do something it can't.
+- The retraction is preserved in the codebase commit log (commit `d7082b4`) and in the planner's removed `.shrink` enum case + tests.
+- Future investigation could probe Roblox's render-engine FFlags for a min-size override (Hyperion locks the FFlag write surface for most flags, so this is research territory, not an implementation task).
+- ADR 0001 Decision 2's `ClientSettingsWriter` surface remains valid for *other* FFlag injection (graphics quality, render path) — this retraction is scoped to the StartScreenSize lever specifically.
 
 ## Implementation map
 
