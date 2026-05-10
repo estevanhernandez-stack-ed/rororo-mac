@@ -17,6 +17,23 @@ struct WindowLayoutToolbarView: View {
 
     var body: some View {
         Menu {
+            // P1.5: include externally-launched Roblox windows in the
+            // pid set so users can tile/shrink a pre-existing grinding
+            // session without having to relaunch via RORORO. External
+            // windows still don't get accounts/auto-keys/relogin —
+            // window mgmt only.
+            Button {
+                vm.includeExternalWindows.toggle()
+            } label: {
+                Label(
+                    vm.includeExternalWindows
+                        ? "✓ Include external windows"
+                        : "Include external windows",
+                    systemImage: "rectangle.stack.badge.plus"
+                )
+            }
+            .help("When ON, Tile/Shrink also moves Roblox windows that weren't launched by RORORO. They don't become accounts.")
+            Divider()
             tileSection
             Divider()
             shrinkSection

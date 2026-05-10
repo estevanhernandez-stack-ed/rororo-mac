@@ -6,6 +6,12 @@
 // Reads pids from RunningAccountTracker.shared. Reads cycler state
 // from AutoKeysCyclerViewModel.shared so menu items can disable while
 // the cycler is .running (ADR 0005 Decision 3).
+//
+// P1.5: includeExternalWindows toggle augments the pid set with any
+// running com.roblox.* process not tracked by RORORO. External windows
+// participate in tile/shrink only — they don't get accounts, auto-keys,
+// or relogin. Demand-driven addition (ADR 0005 Decision 1 Consequences:
+// "If demand surfaces for tile-all-Roblox-windows, we add a toggle").
 
 import AppKit
 import Foundation
@@ -19,13 +25,26 @@ public final class WindowLayoutViewModel {
 
     private let manager: AXWindowManager
 
+    private static let includeExternalKey = "rororo.windowLayout.includeExternalWindows"
+
     /// Set when an apply call hits an unrecoverable error (TCC missing,
     /// or both AX writes failed for every window). Toolbar surfaces via
     /// .alert. Per-window failures DO NOT set this — they log + skip.
     public var lastError: String? = nil
 
+    /// When true, the layout actions augment RORORO-tracked pids with
+    /// any running com.roblox.* processes not launched by RORORO.
+    /// External windows get tile/shrink only — never accounts/auto-keys.
+    /// Persisted in UserDefaults; survives relaunch.
+    public var includeExternalWindows: Bool {
+        didSet {
+            UserDefaults.standard.set(includeExternalWindows, forKey: Self.includeExternalKey)
+        }
+    }
+
     public init(manager: AXWindowManager) {
         self.manager = manager
+        self.includeExternalWindows = UserDefaults.standard.bool(forKey: Self.includeExternalKey)
     }
 
     public func clearError() {
@@ -56,9 +75,15 @@ public final class WindowLayoutViewModel {
             return
         }
 
-        let pids = Array(RunningAccountTracker.shared.pidsByUserId.values)
+        let internalPids = Array(RunningAccountTracker.shared.pidsByUserId.values)
+        let externalPids = includeExternalWindows
+            ? Self.enumerateExternalRobloxPids(excluding: Set(internalPids))
+            : []
+        let pids = internalPids + externalPids
         guard !pids.isEmpty else {
-            lastError = "No RORORO-launched Roblox windows are running."
+            lastError = includeExternalWindows
+                ? "No Roblox windows are running."
+                : "No RORORO-launched Roblox windows are running. Toggle 'Include external windows' in the Layout menu to tile externally-launched ones too."
             return
         }
 
@@ -103,5 +128,19 @@ public final class WindowLayoutViewModel {
             return screen.visibleFrame
         }
         return NSScreen.main?.visibleFrame ?? .zero
+    }
+
+    /// Enumerate running com.roblox.* processes whose pids are NOT in
+    /// `excluding` (the RORORO-tracked set). These are externally-launched
+    /// Roblox windows — e.g. the user's pre-existing grinding session.
+    /// Same bundle-id prefix convention used by MultiInstanceCoordinator
+    /// + RunningAccountTracker.
+    private static func enumerateExternalRobloxPids(excluding: Set<pid_t>) -> [pid_t] {
+        NSWorkspace.shared.runningApplications
+            .filter { app in
+                guard let bid = app.bundleIdentifier else { return false }
+                return bid.hasPrefix("com.roblox") && !excluding.contains(app.processIdentifier)
+            }
+            .map(\.processIdentifier)
     }
 }

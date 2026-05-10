@@ -273,30 +273,43 @@ private struct FavoriteRow: View {
 
     var body: some View {
         HStack(spacing: Theme.Spacing.md) {
-            thumbnail
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: Theme.Spacing.xs) {
-                    Text(game.name)
-                        .font(Theme.Font.body)
-                        .foregroundStyle(Theme.Color.fg1)
-                    if game.isDefault {
-                        Text("DEFAULT")
+            // Tappable leading area — clicking the row sets this game as
+            // default. Plain button style keeps it visually a row, not a
+            // raised button. Disabled when already default so the cursor
+            // doesn't hint at an action that would no-op.
+            Button(action: onSetDefault) {
+                HStack(spacing: Theme.Spacing.md) {
+                    thumbnail
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: Theme.Spacing.xs) {
+                            Text(game.name)
+                                .font(Theme.Font.body)
+                                .foregroundStyle(Theme.Color.fg1)
+                            if game.isDefault {
+                                Text("DEFAULT")
+                                    .font(Theme.Font.monoMicro)
+                                    .tracking(1.2)
+                                    .foregroundStyle(Theme.Color.productTeal)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 1)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 4)
+                                            .stroke(Theme.Color.productTeal, lineWidth: 1)
+                                    )
+                            }
+                        }
+                        Text("Place \(game.placeId)")
                             .font(Theme.Font.monoMicro)
-                            .tracking(1.2)
-                            .foregroundStyle(Theme.Color.productTeal)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(Theme.Color.productTeal, lineWidth: 1)
-                            )
+                            .foregroundStyle(Theme.Color.fg3)
                     }
+                    Spacer()
                 }
-                Text("Place \(game.placeId)")
-                    .font(Theme.Font.monoMicro)
-                    .foregroundStyle(Theme.Color.fg3)
+                .contentShape(Rectangle())
             }
-            Spacer()
+            .buttonStyle(.plain)
+            .disabled(game.isDefault)
+            .help(game.isDefault ? "Already the default" : "Click to set as default")
+
             // Visible Rename button — discoverable surface for the action
             // users can't intuit from a `⋯` menu alone (caught at v0.2
             // smoke 2026-05-07).
@@ -367,30 +380,41 @@ private struct PrivateServerRow: View {
 
     var body: some View {
         HStack(spacing: Theme.Spacing.md) {
-            thumbnail
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: Theme.Spacing.xs) {
-                    Text(server.name)
-                        .font(Theme.Font.body)
-                        .foregroundStyle(Theme.Color.fg1)
-                    if server.isDefault {
-                        Text("DEFAULT")
+            // Tappable leading area — clicking the row sets this server
+            // as default. Same pattern as FavoriteRow.
+            Button(action: onSetDefault) {
+                HStack(spacing: Theme.Spacing.md) {
+                    thumbnail
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: Theme.Spacing.xs) {
+                            Text(server.name)
+                                .font(Theme.Font.body)
+                                .foregroundStyle(Theme.Color.fg1)
+                            if server.isDefault {
+                                Text("DEFAULT")
+                                    .font(Theme.Font.monoMicro)
+                                    .tracking(1.2)
+                                    .foregroundStyle(Theme.Color.productTeal)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 1)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 4)
+                                            .stroke(Theme.Color.productTeal, lineWidth: 1)
+                                    )
+                            }
+                        }
+                        Text(subtitle)
                             .font(Theme.Font.monoMicro)
-                            .tracking(1.2)
-                            .foregroundStyle(Theme.Color.productTeal)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(Theme.Color.productTeal, lineWidth: 1)
-                            )
+                            .foregroundStyle(Theme.Color.fg3)
                     }
+                    Spacer()
                 }
-                Text(subtitle)
-                    .font(Theme.Font.monoMicro)
-                    .foregroundStyle(Theme.Color.fg3)
+                .contentShape(Rectangle())
             }
-            Spacer()
+            .buttonStyle(.plain)
+            .disabled(server.isDefault)
+            .help(server.isDefault ? "Already the default" : "Click to set as default")
+
             Button(action: onRename) {
                 Image(systemName: "pencil")
                     .font(.system(size: 13, weight: .medium))
