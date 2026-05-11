@@ -56,6 +56,13 @@ public final class LaunchSettingsStore: ObservableObject {
     /// "Change" affordance. Reusing `KillKeyCombo` because the shape
     /// is identical (keyCode + modifier bitmask).
     @Published public private(set) var recorderHotkey: KillKeyCombo
+    /// Global fallback macro for accounts without their own recording
+    /// and without an explicit sharing reference (D-3.8). Custom
+    /// recordings + explicit references still win — this is only the
+    /// third tier of the resolver waterfall. Coexists with the
+    /// existing stay-awake override toggle; stay-awake wins when both
+    /// are configured.
+    @Published public private(set) var defaultMacroBehavior: DefaultMacroBehavior
 
     /// Default cycle pacing — 0 means "as soon as the cycle finishes
     /// the last account, start back at the first." That's the natural
@@ -106,6 +113,12 @@ public final class LaunchSettingsStore: ObservableObject {
             self.recorderHotkey = decoded
         } else {
             self.recorderHotkey = Self.defaultRecorderHotkey
+        }
+        if let raw = defaults.data(forKey: Keys.defaultMacroBehavior),
+           let decoded = try? JSONDecoder().decode(DefaultMacroBehavior.self, from: raw) {
+            self.defaultMacroBehavior = decoded
+        } else {
+            self.defaultMacroBehavior = .skip
         }
         self.lowResourceMode = defaults.bool(forKey: Keys.lowResourceMode)
         // Clean up any leftover P2.5 launch-size key from prior testing.
@@ -179,6 +192,16 @@ public final class LaunchSettingsStore: ObservableObject {
         }
     }
 
+    /// Persist the global default macro behavior (D-3.8). The cycler
+    /// toolbar picker writes this when the user picks Skip / Stay
+    /// alive / Use [Account].
+    public func setDefaultMacroBehavior(_ behavior: DefaultMacroBehavior) {
+        defaultMacroBehavior = behavior
+        if let encoded = try? JSONEncoder().encode(behavior) {
+            defaults.set(encoded, forKey: Keys.defaultMacroBehavior)
+        }
+    }
+
     /// Snapshot of current settings — used by the launcher to apply at
     /// launch time without holding a reference to the store on a non-main
     /// actor.
@@ -200,6 +223,7 @@ public final class LaunchSettingsStore: ObservableObject {
         static let autoKeysSafety = "rororo.autoKeys.safety"
         static let autoKeysStayAwakeMode = "rororo.autoKeys.stayAwakeMode"
         static let recorderHotkey = "rororo.autoKeys.recorderHotkey"
+        static let defaultMacroBehavior = "rororo.autoKeys.defaultMacroBehavior"
     }
 }
 

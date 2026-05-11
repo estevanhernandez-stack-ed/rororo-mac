@@ -142,4 +142,134 @@ final class AutoKeysSharingResolverTests: XCTestCase {
             AutoKeysSharingResolver.playableSequence(account: consumer, all: [source, consumer])
         )
     }
+
+    // MARK: - D-3.8 — global default fallback
+
+    func testResolve_SkipDefault_LeavesOwnEmptyAccountSkipped() {
+        let a = account(id: "1")
+        XCTAssertEqual(
+            AutoKeysSharingResolver.resolve(account: a, all: [a], globalDefault: .skip),
+            .ownEmpty
+        )
+    }
+
+    func testResolve_StayAliveDefault_SynthesizesSequenceForOwnEmpty() {
+        let a = account(id: "1")
+        let resolution = AutoKeysSharingResolver.resolve(
+            account: a,
+            all: [a],
+            globalDefault: .stayAlive
+        )
+        guard case let .usingGlobalDefault(reason, seq) = resolution else {
+            XCTFail("Expected usingGlobalDefault, got \(resolution)")
+            return
+        }
+        XCTAssertEqual(reason, .stayAlive)
+        // The synthesized sequence is a legacy 1-step spacebar — keyCode
+        // 49, delayAfter 1.0.
+        XCTAssertTrue(seq.isLegacy)
+        XCTAssertEqual(seq.steps.count, 1)
+        XCTAssertEqual(seq.steps.first?.keyCode, 49)
+    }
+
+    func testResolve_StayAliveDefault_DoesNotOverrideOwnRecording() {
+        let own = legacy()
+        let a = account(id: "1", autoKeys: own)
+        XCTAssertEqual(
+            AutoKeysSharingResolver.resolve(account: a, all: [a], globalDefault: .stayAlive),
+            .ownRecording(own)
+        )
+    }
+
+    func testResolve_StayAliveDefault_DoesNotOverrideExplicitReference() {
+        let sharedSeq = stream(shared: true)
+        let source = account(id: "1", autoKeys: sharedSeq)
+        let consumer = account(id: "2", ref: "1")
+        XCTAssertEqual(
+            AutoKeysSharingResolver.resolve(
+                account: consumer,
+                all: [source, consumer],
+                globalDefault: .stayAlive
+            ),
+            .sharedFrom(sourceAccountId: "1", sequence: sharedSeq)
+        )
+    }
+
+    func testResolve_UseSharedDefault_ResolvesToSourceWhenHealthy() {
+        let sharedSeq = stream(shared: true)
+        let source = account(id: "1", autoKeys: sharedSeq)
+        let consumer = account(id: "2")
+        let resolution = AutoKeysSharingResolver.resolve(
+            account: consumer,
+            all: [source, consumer],
+            globalDefault: .useShared(sourceUserId: "1")
+        )
+        XCTAssertEqual(
+            resolution,
+            .usingGlobalDefault(reason: .sharedFrom(sourceAccountId: "1"), sequence: sharedSeq)
+        )
+    }
+
+    func testResolve_UseSharedDefault_FallsThroughToSkipWhenSourceMissing() {
+        let consumer = account(id: "2")
+        XCTAssertEqual(
+            AutoKeysSharingResolver.resolve(
+                account: consumer,
+                all: [consumer],
+                globalDefault: .useShared(sourceUserId: "missing")
+            ),
+            .ownEmpty
+        )
+    }
+
+    func testResolve_UseSharedDefault_FallsThroughToSkipWhenSourceNotShared() {
+        let unshared = stream(shared: false)
+        let source = account(id: "1", autoKeys: unshared)
+        let consumer = account(id: "2")
+        XCTAssertEqual(
+            AutoKeysSharingResolver.resolve(
+                account: consumer,
+                all: [source, consumer],
+                globalDefault: .useShared(sourceUserId: "1")
+            ),
+            .ownEmpty
+        )
+    }
+
+    func testResolve_UseSharedDefault_SelfReferenceFallsThroughToSkip() {
+        // Defensive — the picker shouldn't allow the user to point the
+        // global default at themselves, but if it did, the resolver
+        // must not loop.
+        let a = account(id: "1")
+        XCTAssertEqual(
+            AutoKeysSharingResolver.resolve(
+                account: a,
+                all: [a],
+                globalDefault: .useShared(sourceUserId: "1")
+            ),
+            .ownEmpty
+        )
+    }
+
+    func testPlayableSequence_GlobalDefault_StayAliveReturnsNonNil() {
+        let a = account(id: "1")
+        XCTAssertNotNil(
+            AutoKeysSharingResolver.playableSequence(
+                account: a,
+                all: [a],
+                globalDefault: .stayAlive
+            )
+        )
+    }
+
+    func testPlayableSequence_GlobalDefault_SkipReturnsNil() {
+        let a = account(id: "1")
+        XCTAssertNil(
+            AutoKeysSharingResolver.playableSequence(
+                account: a,
+                all: [a],
+                globalDefault: .skip
+            )
+        )
+    }
 }

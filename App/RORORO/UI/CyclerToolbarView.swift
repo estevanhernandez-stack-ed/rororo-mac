@@ -113,6 +113,40 @@ struct CyclerToolbarView: View {
                         settings.setAutoKeysLoopDelay(30)
                     }
                 }
+                // D-3.8 — global default macro for accounts without their
+                // own recording AND no explicit sharing reference. Three
+                // categories: Skip (current behavior), Stay alive (built-
+                // in spacebar synthesis), or pick any shared recording
+                // from another account.
+                Menu("Default for unrecorded accounts") {
+                    let behavior = settings.defaultMacroBehavior
+                    Button(behavior == .skip ? "✓ Skip (do nothing)" : "Skip (do nothing)") {
+                        settings.setDefaultMacroBehavior(.skip)
+                        vm.refreshEstimate()
+                    }
+                    Button(behavior == .stayAlive ? "✓ Stay alive (spacebar)" : "Stay alive (spacebar)") {
+                        settings.setDefaultMacroBehavior(.stayAlive)
+                        vm.refreshEstimate()
+                    }
+                    let shareables = AccountStore.shared.accounts.filter {
+                        $0.autoKeys?.isShared == true && !($0.autoKeys?.isEmpty ?? true)
+                    }
+                    if !shareables.isEmpty {
+                        Divider()
+                        ForEach(shareables, id: \.id) { owner in
+                            let macroName = owner.autoKeys?.name.map { " / \($0)" } ?? ""
+                            let label = "Use \(owner.displayName)\(macroName)"
+                            let isPicked: Bool = {
+                                if case let .useShared(id) = behavior { return id == owner.id }
+                                return false
+                            }()
+                            Button(isPicked ? "✓ \(label)" : label) {
+                                settings.setDefaultMacroBehavior(.useShared(sourceUserId: owner.id))
+                                vm.refreshEstimate()
+                            }
+                        }
+                    }
+                }
             }
         } label: {
             Label(buttonLabel, systemImage: buttonIcon)

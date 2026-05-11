@@ -22,6 +22,7 @@ struct AutoKeysRowBadge: View {
     let onTap: () -> Void
 
     private let store = AccountStore.shared
+    private let settings = LaunchSettingsStore.shared
 
     var body: some View {
         Button(action: onTap) {
@@ -112,9 +113,14 @@ struct AutoKeysRowBadge: View {
     // MARK: - Label
 
     /// Resolves the effective sequence the cycler will play (own vs
-    /// shared vs orphan/broken). Drives the label + colors.
+    /// shared vs global-default vs orphan/broken). Drives the label
+    /// + colors.
     private var resolution: AutoKeysSharingResolver.Resolution {
-        AutoKeysSharingResolver.resolve(account: account, all: store.accounts)
+        AutoKeysSharingResolver.resolve(
+            account: account,
+            all: store.accounts,
+            globalDefault: settings.defaultMacroBehavior
+        )
     }
 
     private var label: String {
@@ -141,6 +147,17 @@ struct AutoKeysRowBadge: View {
                 return "\(ownerName.uppercased()) · \(macroName.uppercased())"
             }
             return "USING \(ownerName.uppercased())"
+        case let .usingGlobalDefault(reason, seq):
+            switch reason {
+            case .stayAlive:
+                return "DEFAULT · STAY ALIVE"
+            case let .sharedFrom(sourceId):
+                let ownerName = store.accounts.first(where: { $0.id == sourceId })?.displayName ?? "?"
+                if let macroName = seq.name {
+                    return "DEFAULT · \(ownerName.uppercased())/\(macroName.uppercased())"
+                }
+                return "DEFAULT · \(ownerName.uppercased())"
+            }
         case .orphaned, .sourceNotShared:
             return "SHARED · MISSING"
         }
@@ -161,6 +178,15 @@ struct AutoKeysRowBadge: View {
         case let .sharedFrom(sourceId, seq):
             let name = store.accounts.first(where: { $0.id == sourceId })?.displayName ?? "?"
             return "Using \(name)'s shared recording (\(seq.actions.count) actions, \(formatSeconds(seq.totalDuration))). Right-click to switch or revert to own."
+        case let .usingGlobalDefault(reason, seq):
+            switch reason {
+            case .stayAlive:
+                return "Falling back to the global default — synthesized spacebar keeps this account alive. Record a sequence for this account to override, or change the default in the cycler toolbar."
+            case let .sharedFrom(sourceId):
+                let name = store.accounts.first(where: { $0.id == sourceId })?.displayName ?? "?"
+                let count = seq.isLegacy ? seq.steps.count : seq.actions.count
+                return "Falling back to the global default — playing \(name)'s shared recording (\(count) steps, \(formatSeconds(seq.totalDuration))). Record your own to override."
+            }
         case let .orphaned(missingId):
             return "Referenced account \(missingId) is gone or has no recording. Right-click to clear or pick a different source."
         case let .sourceNotShared(sourceId):
@@ -174,6 +200,7 @@ struct AutoKeysRowBadge: View {
         case .ownEmpty:                    return "keyboard"
         case .ownRecording:                return "keyboard.fill"
         case .sharedFrom:                  return "person.2.fill"
+        case .usingGlobalDefault:          return "checkmark.shield"
         case .orphaned, .sourceNotShared:  return "exclamationmark.triangle.fill"
         }
     }
@@ -181,6 +208,7 @@ struct AutoKeysRowBadge: View {
     private var iconColor: Color {
         switch resolution {
         case .orphaned, .sourceNotShared:  return Theme.Color.stateWarn
+        case .usingGlobalDefault:          return Theme.Color.fg2.opacity(0.95)
         default:                           return Color.white.opacity(0.9)
         }
     }
@@ -188,6 +216,7 @@ struct AutoKeysRowBadge: View {
     private var textColor: Color {
         switch resolution {
         case .orphaned, .sourceNotShared:  return Theme.Color.stateWarn
+        case .usingGlobalDefault:          return Theme.Color.fg2
         default:                           return Color.white.opacity(0.85)
         }
     }

@@ -44,6 +44,7 @@ struct AutoKeysRecorderV2Sheet: View {
             header
             divider
             legacyNotice
+            sourcePicker
             hotkeySection
             statusBlock
             recordButton
@@ -54,7 +55,7 @@ struct AutoKeysRecorderV2Sheet: View {
             footer
         }
         .padding(Theme.Spacing.lg)
-        .frame(width: 520, height: 620)
+        .frame(width: 520, height: 680)
         .background(Theme.Color.bgPage)
         .background(KeyCaptureRepresentable(capturing: $capturingHotkey) { code, mods in
             // Reject bare keys — a 4-key chord avoids accidents in
@@ -110,6 +111,55 @@ struct AutoKeysRecorderV2Sheet: View {
             }
             .buttonStyle(.bordered)
             .disabled(viewModel.phase == .recording_armed || viewModel.phase == .recording_active)
+        }
+    }
+
+    /// D-3.8 — surfaces the same picker as the row's right-click context
+    /// menu, so a user clicking the chip (left-click) can see and pick
+    /// shared recordings without discovering the context menu. Renders
+    /// only when at least one OTHER account has a shared recording.
+    @ViewBuilder
+    private var sourcePicker: some View {
+        let shareables = viewModel.shareableSources
+        if !shareables.isEmpty {
+            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                Text("USE ANOTHER ACCOUNT'S RECORDING")
+                    .font(Theme.Font.bodySmall)
+                    .foregroundStyle(Theme.Color.fg2)
+                    .tracking(0.7)
+                HStack(spacing: Theme.Spacing.md) {
+                    Menu {
+                        Button(viewModel.sourceUserId == nil
+                               ? "✓ Use my own recording"
+                               : "Use my own recording") {
+                            viewModel.setSourceReference(nil)
+                        }
+                        Divider()
+                        ForEach(shareables, id: \.id) { owner in
+                            let label = viewModel.pickerLabel(for: owner)
+                            Button(viewModel.sourceUserId == owner.id
+                                   ? "✓ \(label)"
+                                   : label) {
+                                viewModel.setSourceReference(owner.id)
+                            }
+                        }
+                    } label: {
+                        Text(viewModel.sourcePickerLabel)
+                            .font(Theme.Font.body)
+                            .foregroundStyle(Theme.Color.fg1)
+                            .padding(.horizontal, Theme.Spacing.md)
+                            .padding(.vertical, 4)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.Color.bgRaised)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
+                }
+                Text("Saving a new recording below will switch back to your own. Right-click the chip on this row for the same picker.")
+                    .font(Theme.Font.bodySmall)
+                    .foregroundStyle(Theme.Color.fg3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -361,6 +411,13 @@ private final class RecorderV2ViewModel {
     var macroName: String = ""
     var preflightMessage: String?
     var hotkey: KillKeyCombo
+    /// D-3.8 — currently-selected sharing reference for this account.
+    /// nil = "use own recording" (no reference set). Mutated by
+    /// `setSourceReference` which commits to AccountStore immediately
+    /// (matching the right-click context menu's behavior). Recording
+    /// a new own-sequence in this sheet AUTO-CLEARS this — saving a
+    /// new recording always means "I want my own to play."
+    var sourceUserId: String?
 
     private let account: Account
     private let store: AccountStore
@@ -378,6 +435,7 @@ private final class RecorderV2ViewModel {
         self.windowRectTracker = .shared
         self.settings = .shared
         self.hotkey = LaunchSettingsStore.shared.recorderHotkey
+        self.sourceUserId = account.autoKeysSourceAccountId
         // Pre-populate macroName from an existing stream recording so
         // the user can keep the label across a re-record without
         // retyping. Legacy variants have no name.
@@ -394,6 +452,45 @@ private final class RecorderV2ViewModel {
     func setHotkey(_ combo: KillKeyCombo) {
         hotkey = combo
         settings.setRecorderHotkey(combo)
+    }
+
+    /// D-3.8 — set or clear this account's sharing reference. Commits
+    /// immediately to AccountStore (mirrors the right-click context
+    /// menu) so the user sees the row badge update on sheet close
+    /// without an extra Save click.
+    func setSourceReference(_ id: String?) {
+        sourceUserId = id
+        store.setAutoKeysSourceAccountId(userId: account.userId, sourceUserId: id)
+    }
+
+    /// Eligible shared sources for the picker — every other account
+    /// whose own recording is `isShared`. Mirrors `AutoKeysRowBadge`'s
+    /// `shareableSources` computed property.
+    var shareableSources: [Account] {
+        store.accounts.filter { other in
+            guard other.userId != account.userId else { return false }
+            guard let seq = other.autoKeys, !seq.isEmpty else { return false }
+            return seq.isShared
+        }
+    }
+
+    /// Display label for a shareable source in the picker menu.
+    /// "Account · Macro Name" when named; bare display name otherwise.
+    func pickerLabel(for owner: Account) -> String {
+        if let macroName = owner.autoKeys?.name {
+            return "\(owner.displayName) · \(macroName)"
+        }
+        return owner.displayName
+    }
+
+    /// Top-level label for the picker's collapsed state — what the user
+    /// is currently set to.
+    var sourcePickerLabel: String {
+        if let id = sourceUserId,
+           let owner = store.accounts.first(where: { $0.userId == id }) {
+            return pickerLabel(for: owner)
+        }
+        return "Use my own recording"
     }
 
     func startRecording() async {
@@ -490,6 +587,14 @@ private final class RecorderV2ViewModel {
             return
         }
         store.setAutoKeys(userId: account.userId, sequence: sequence)
+        // D-3.8 — recording a fresh own sequence implies the user wants
+        // it to play. Auto-clear any sharing reference so the resolver
+        // picks the new recording instead of routing through the
+        // (now-stale) reference.
+        if sourceUserId != nil {
+            sourceUserId = nil
+            store.setAutoKeysSourceAccountId(userId: account.userId, sourceUserId: nil)
+        }
     }
 
     func discard() async {
