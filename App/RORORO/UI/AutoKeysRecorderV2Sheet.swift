@@ -114,33 +114,51 @@ struct AutoKeysRecorderV2Sheet: View {
         }
     }
 
-    /// D-3.8 — surfaces the same picker as the row's right-click context
-    /// menu, so a user clicking the chip (left-click) can see and pick
-    /// shared recordings without discovering the context menu. Renders
-    /// only when at least one OTHER account has a shared recording.
+    /// D-4.4 — picker section listing macros from the library. Renders
+    /// when there's something to pick (other accounts' shared macros,
+    /// or this account's own macros if there are multiple). Same UX
+    /// as the row's right-click context menu, surfaced for left-click
+    /// discoverability.
     @ViewBuilder
     private var sourcePicker: some View {
-        let shareables = viewModel.shareableSources
-        if !shareables.isEmpty {
+        let shareables = viewModel.shareableMacros
+        let owns = viewModel.ownMacros
+        if !shareables.isEmpty || owns.count > 1 {
             VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                Text("USE ANOTHER ACCOUNT'S RECORDING")
+                Text("ACTIVE MACRO")
                     .font(Theme.Font.bodySmall)
                     .foregroundStyle(Theme.Color.fg2)
                     .tracking(0.7)
                 HStack(spacing: Theme.Spacing.md) {
                     Menu {
-                        Button(viewModel.sourceUserId == nil
-                               ? "✓ Use my own recording"
-                               : "Use my own recording") {
-                            viewModel.setSourceReference(nil)
+                        Button(viewModel.activeMacroId == nil
+                               ? "✓ No macro (cycler skips this account)"
+                               : "No macro (cycler skips this account)") {
+                            viewModel.setActiveMacro(nil)
                         }
-                        Divider()
-                        ForEach(shareables, id: \.id) { owner in
-                            let label = viewModel.pickerLabel(for: owner)
-                            Button(viewModel.sourceUserId == owner.id
-                                   ? "✓ \(label)"
-                                   : label) {
-                                viewModel.setSourceReference(owner.id)
+                        if !owns.isEmpty {
+                            Divider()
+                            Section("My macros") {
+                                ForEach(owns, id: \.id) { macro in
+                                    Button(viewModel.activeMacroId == macro.id
+                                           ? "✓ \(macro.name)"
+                                           : macro.name) {
+                                        viewModel.setActiveMacro(macro.id)
+                                    }
+                                }
+                            }
+                        }
+                        if !shareables.isEmpty {
+                            Divider()
+                            Section("Shared from other accounts") {
+                                ForEach(shareables, id: \.id) { macro in
+                                    let label = viewModel.pickerLabel(for: macro)
+                                    Button(viewModel.activeMacroId == macro.id
+                                           ? "✓ \(label)"
+                                           : label) {
+                                        viewModel.setActiveMacro(macro.id)
+                                    }
+                                }
                             }
                         }
                     } label: {
@@ -155,7 +173,7 @@ struct AutoKeysRecorderV2Sheet: View {
                     .background(Theme.Color.bgRaised)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
                 }
-                Text("Saving a new recording below will switch back to your own. Right-click the chip on this row for the same picker.")
+                Text("Recording below saves a new macro and binds it to this account. Right-click the chip on the row for the same picker.")
                     .font(Theme.Font.bodySmall)
                     .foregroundStyle(Theme.Color.fg3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -165,11 +183,22 @@ struct AutoKeysRecorderV2Sheet: View {
 
     @ViewBuilder
     private var legacyNotice: some View {
-        if let existing = account.autoKeys, existing.isLegacy, !existing.isEmpty {
+        // D-4.4 — the migrated active macro may be a legacy variant if
+        // the user's pre-D-3 step list was promoted to the library
+        // without ever being re-recorded. Surface the same "re-record
+        // to enable mouse" hint as before.
+        if let id = account.activeMacroId,
+           let macro = MacroStore.shared.macro(id: id),
+           macro.isLegacy,
+           !macro.isEmpty {
+            let stepCount: Int = {
+                if case let .legacy(steps) = macro.variant { return steps.count }
+                return 0
+            }()
             HStack(spacing: Theme.Spacing.sm) {
                 Image(systemName: "info.circle.fill")
                     .foregroundStyle(Theme.Color.stateWarn)
-                Text("This account has a legacy \(existing.steps.count)-key recording. Saving here overwrites it with a full action stream — keys + mouse.")
+                Text("Active macro is a legacy \(stepCount)-key recording. Saving here creates a new full action-stream macro for this account.")
                     .font(Theme.Font.bodySmall)
                     .foregroundStyle(Theme.Color.fg2)
                     .fixedSize(horizontal: false, vertical: true)
@@ -405,19 +434,16 @@ private final class RecorderV2ViewModel {
     var didCap: Bool = false
     var isShared: Bool = false
     /// User-typed label for this recording. Persisted on Save iff the
-    /// trimmed value is non-empty (collapse-to-nil happens inside
-    /// `AutoKeysSequence`). Pre-populates from the existing sequence's
-    /// name when re-recording so the user can keep it or change it.
+    /// trimmed value is non-empty. Pre-populates from the currently-
+    /// active macro on open so the user can keep it or change it.
     var macroName: String = ""
     var preflightMessage: String?
     var hotkey: KillKeyCombo
-    /// D-3.8 — currently-selected sharing reference for this account.
-    /// nil = "use own recording" (no reference set). Mutated by
-    /// `setSourceReference` which commits to AccountStore immediately
-    /// (matching the right-click context menu's behavior). Recording
-    /// a new own-sequence in this sheet AUTO-CLEARS this — saving a
-    /// new recording always means "I want my own to play."
-    var sourceUserId: String?
+    /// D-4.4 — currently-bound active macro for this account. nil ≡
+    /// "no macro selected." Mutated by `setActiveMacro` which commits
+    /// to AccountStore immediately. Recording a new own-sequence in
+    /// this sheet replaces it.
+    var activeMacroId: String?
 
     private let account: Account
     private let store: AccountStore
@@ -435,12 +461,13 @@ private final class RecorderV2ViewModel {
         self.windowRectTracker = .shared
         self.settings = .shared
         self.hotkey = LaunchSettingsStore.shared.recorderHotkey
-        self.sourceUserId = account.autoKeysSourceAccountId
-        // Pre-populate macroName from an existing stream recording so
-        // the user can keep the label across a re-record without
-        // retyping. Legacy variants have no name.
-        if let existing = account.autoKeys, let n = existing.name {
-            self.macroName = n
+        self.activeMacroId = account.activeMacroId
+        // D-4.4 — pre-populate macroName + isShared from the currently-
+        // active macro (if any) so re-record keeps the same metadata.
+        if let id = account.activeMacroId,
+           let macro = MacroStore.shared.macro(id: id) {
+            self.macroName = macro.name
+            self.isShared = macro.isShared
         }
         self.recorder = ActionStreamRecorder(
             source: NSEventRecorderEventSource(),
@@ -454,43 +481,44 @@ private final class RecorderV2ViewModel {
         settings.setRecorderHotkey(combo)
     }
 
-    /// D-3.8 — set or clear this account's sharing reference. Commits
+    /// D-4.4 — set or clear this account's active macro. Commits
     /// immediately to AccountStore (mirrors the right-click context
     /// menu) so the user sees the row badge update on sheet close
     /// without an extra Save click.
-    func setSourceReference(_ id: String?) {
-        sourceUserId = id
-        store.setAutoKeysSourceAccountId(userId: account.userId, sourceUserId: id)
+    func setActiveMacro(_ id: String?) {
+        activeMacroId = id
+        store.setActiveMacroId(userId: account.userId, macroId: id)
     }
 
-    /// Eligible shared sources for the picker — every other account
-    /// whose own recording is `isShared`. Mirrors `AutoKeysRowBadge`'s
-    /// `shareableSources` computed property.
-    var shareableSources: [Account] {
-        store.accounts.filter { other in
-            guard other.userId != account.userId else { return false }
-            guard let seq = other.autoKeys, !seq.isEmpty else { return false }
-            return seq.isShared
+    /// Shareable macros from the library, excluding this account's own
+    /// macros (they go in the "my own" submenu instead).
+    var shareableMacros: [Macro] {
+        MacroStore.shared.sharedMacros(excludingOwner: account.userId)
+    }
+
+    /// Macros this account itself owns in the library.
+    var ownMacros: [Macro] {
+        MacroStore.shared.macros(ownedBy: account.userId)
+    }
+
+    /// Display label for a macro in the picker menu — "Owner · Name"
+    /// when the macro has an owner attribution, bare name otherwise.
+    func pickerLabel(for macro: Macro) -> String {
+        if let ownerId = macro.ownerUserId,
+           let owner = store.accounts.first(where: { $0.id == ownerId }) {
+            return "\(owner.displayName) · \(macro.name)"
         }
+        return macro.name
     }
 
-    /// Display label for a shareable source in the picker menu.
-    /// "Account · Macro Name" when named; bare display name otherwise.
-    func pickerLabel(for owner: Account) -> String {
-        if let macroName = owner.autoKeys?.name {
-            return "\(owner.displayName) · \(macroName)"
-        }
-        return owner.displayName
-    }
-
-    /// Top-level label for the picker's collapsed state — what the user
-    /// is currently set to.
+    /// Top-level label for the picker's collapsed state — the name of
+    /// the currently-bound macro, or a "no macro" placeholder.
     var sourcePickerLabel: String {
-        if let id = sourceUserId,
-           let owner = store.accounts.first(where: { $0.userId == id }) {
-            return pickerLabel(for: owner)
+        if let id = activeMacroId,
+           let macro = MacroStore.shared.macro(id: id) {
+            return pickerLabel(for: macro)
         }
-        return "Use my own recording"
+        return "No macro selected"
     }
 
     func startRecording() async {
@@ -578,23 +606,33 @@ private final class RecorderV2ViewModel {
 
     func save() {
         guard !capturedActions.isEmpty else { return }
-        guard let sequence = AutoKeysSequence(
-            actions: capturedActions,
-            isShared: isShared,
-            name: macroName
-        ) else {
+        guard capturedActions.count <= AutoKeysSequence.maxActionCount else {
             preflightMessage = "Recording exceeded the \(AutoKeysSequence.maxActionCount)-action cap. Re-record shorter."
             return
         }
-        store.setAutoKeys(userId: account.userId, sequence: sequence)
-        // D-3.8 — recording a fresh own sequence implies the user wants
-        // it to play. Auto-clear any sharing reference so the resolver
-        // picks the new recording instead of routing through the
-        // (now-stale) reference.
-        if sourceUserId != nil {
-            sourceUserId = nil
-            store.setAutoKeysSourceAccountId(userId: account.userId, sourceUserId: nil)
-        }
+        // D-4.4 — create or replace the macro in the library, then bind
+        // it to this account. Replacement only when the user is re-
+        // recording over their OWN active macro; if they had someone
+        // else's macro selected, the new recording creates a fresh
+        // library entry (doesn't mutate the other account's macro).
+        let macroId: String = {
+            if let currentId = activeMacroId,
+               let existing = MacroStore.shared.macro(id: currentId),
+               existing.ownerUserId == account.userId {
+                return existing.id
+            }
+            return UUID().uuidString
+        }()
+        let macro = Macro(
+            id: macroId,
+            name: macroName,
+            ownerUserId: account.userId,
+            variant: .stream(capturedActions),
+            isShared: isShared
+        )
+        MacroStore.shared.upsert(macro)
+        store.setActiveMacroId(userId: account.userId, macroId: macro.id)
+        activeMacroId = macro.id
     }
 
     func discard() async {

@@ -113,11 +113,10 @@ struct CyclerToolbarView: View {
                         settings.setAutoKeysLoopDelay(30)
                     }
                 }
-                // D-3.8 — global default macro for accounts without their
-                // own recording AND no explicit sharing reference. Three
-                // categories: Skip (current behavior), Stay alive (built-
-                // in spacebar synthesis), or pick any shared recording
-                // from another account.
+                // D-3.8 / D-4.4 — global default macro for accounts
+                // without an active macro. Three categories: Skip
+                // (current behavior), Stay alive (built-in spacebar
+                // synthesis), or pick any shared macro from the library.
                 Menu("Default for unrecorded accounts") {
                     let behavior = settings.defaultMacroBehavior
                     Button(behavior == .skip ? "✓ Skip (do nothing)" : "Skip (do nothing)") {
@@ -128,20 +127,25 @@ struct CyclerToolbarView: View {
                         settings.setDefaultMacroBehavior(.stayAlive)
                         vm.refreshEstimate()
                     }
-                    let shareables = AccountStore.shared.accounts.filter {
-                        $0.autoKeys?.isShared == true && !($0.autoKeys?.isEmpty ?? true)
-                    }
+                    let shareables = MacroStore.shared.sharedMacros()
                     if !shareables.isEmpty {
                         Divider()
-                        ForEach(shareables, id: \.id) { owner in
-                            let macroName = owner.autoKeys?.name.map { " / \($0)" } ?? ""
-                            let label = "Use \(owner.displayName)\(macroName)"
+                        ForEach(shareables, id: \.id) { macro in
+                            let ownerName = AccountStore.shared.accounts
+                                .first(where: { $0.id == macro.ownerUserId })?.displayName ?? "?"
+                            let label = "Use \(ownerName) / \(macro.name)"
                             let isPicked: Bool = {
-                                if case let .useShared(id) = behavior { return id == owner.id }
+                                if case let .useMacro(id) = behavior { return id == macro.id }
+                                if case let .useShared(userId) = behavior {
+                                    // Legacy compat — useShared resolves
+                                    // to the first shared macro owned by
+                                    // that user.
+                                    return userId == macro.ownerUserId && macro.isShared
+                                }
                                 return false
                             }()
                             Button(isPicked ? "✓ \(label)" : label) {
-                                settings.setDefaultMacroBehavior(.useShared(sourceUserId: owner.id))
+                                settings.setDefaultMacroBehavior(.useMacro(macroId: macro.id))
                                 vm.refreshEstimate()
                             }
                         }
