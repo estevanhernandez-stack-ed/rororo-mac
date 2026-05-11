@@ -49,11 +49,27 @@ public final class LaunchSettingsStore: ObservableObject {
     /// values are NOT touched — toggling this off restores everyone to
     /// their custom macros immediately. Mode, not destructive preset.
     @Published public private(set) var autoKeysStayAwakeMode: Bool
+    /// Global hotkey that arms / fires / stops the D-3 recorder
+    /// (D-3.4.1). Default Ctrl+Opt+Shift+P — a 4-key chord with
+    /// effectively zero collision risk against Roblox keybinds or
+    /// macOS system shortcuts. User rebinds via the V2 sheet's
+    /// "Change" affordance. Reusing `KillKeyCombo` because the shape
+    /// is identical (keyCode + modifier bitmask).
+    @Published public private(set) var recorderHotkey: KillKeyCombo
 
     /// Default cycle pacing — 0 means "as soon as the cycle finishes
     /// the last account, start back at the first." That's the natural
     /// fit for active-macro use (firing keybinds repeatedly while AFK).
     public static let defaultAutoKeysLoopDelay: TimeInterval = 0
+    /// Default recorder hotkey — Control+Option+Shift+P (D-3.4.1).
+    /// `P` is virtual keyCode 35. Modifier bits: control (1<<18) |
+    /// option (1<<19) | shift (1<<17). User-rebindable; the chord
+    /// must include at least one modifier in practice to avoid
+    /// accidental keystrokes triggering record/stop.
+    public static let defaultRecorderHotkey = KillKeyCombo(
+        keyCode: 35,
+        modifiers: (1 << 17) | (1 << 18) | (1 << 19)
+    )
     /// Loop delay used when stay-awake mode is active. 30 s gives the
     /// user a clear visual rhythm — burst through the windows, pause
     /// long enough to come back, repeat.
@@ -85,6 +101,12 @@ public final class LaunchSettingsStore: ObservableObject {
             self.autoKeysSafety = .default
         }
         self.autoKeysStayAwakeMode = defaults.bool(forKey: Keys.autoKeysStayAwakeMode)
+        if let raw = defaults.data(forKey: Keys.recorderHotkey),
+           let decoded = try? JSONDecoder().decode(KillKeyCombo.self, from: raw) {
+            self.recorderHotkey = decoded
+        } else {
+            self.recorderHotkey = Self.defaultRecorderHotkey
+        }
         self.lowResourceMode = defaults.bool(forKey: Keys.lowResourceMode)
         // Clean up any leftover P2.5 launch-size key from prior testing.
         // P2.5 was retracted — StartScreenSize is not the lever Roblox
@@ -148,6 +170,15 @@ public final class LaunchSettingsStore: ObservableObject {
         }
     }
 
+    /// Persist the recorder hotkey (D-3.4.1). The V2 sheet writes this
+    /// when the user picks a new chord via the "Change" affordance.
+    public func setRecorderHotkey(_ combo: KillKeyCombo) {
+        recorderHotkey = combo
+        if let encoded = try? JSONEncoder().encode(combo) {
+            defaults.set(encoded, forKey: Keys.recorderHotkey)
+        }
+    }
+
     /// Snapshot of current settings — used by the launcher to apply at
     /// launch time without holding a reference to the store on a non-main
     /// actor.
@@ -168,6 +199,7 @@ public final class LaunchSettingsStore: ObservableObject {
         static let autoKeysLoopDelay = "rororo.autoKeys.loopDelay"
         static let autoKeysSafety = "rororo.autoKeys.safety"
         static let autoKeysStayAwakeMode = "rororo.autoKeys.stayAwakeMode"
+        static let recorderHotkey = "rororo.autoKeys.recorderHotkey"
     }
 }
 

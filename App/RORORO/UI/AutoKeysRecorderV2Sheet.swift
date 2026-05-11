@@ -29,6 +29,7 @@ struct AutoKeysRecorderV2Sheet: View {
     let account: Account
 
     @State private var viewModel: RecorderV2ViewModel
+    @State private var capturingHotkey: Bool = false
 
     init(isPresented: Binding<Bool>, account: Account) {
         self._isPresented = isPresented
@@ -41,6 +42,7 @@ struct AutoKeysRecorderV2Sheet: View {
             header
             divider
             legacyNotice
+            hotkeySection
             statusBlock
             recordButton
             counters
@@ -50,8 +52,18 @@ struct AutoKeysRecorderV2Sheet: View {
             footer
         }
         .padding(Theme.Spacing.lg)
-        .frame(width: 520, height: 540)
+        .frame(width: 520, height: 620)
         .background(Theme.Color.bgPage)
+        .background(KeyCaptureRepresentable(capturing: $capturingHotkey) { code, mods in
+            // Reject bare keys — a 4-key chord avoids accidents in
+            // game; we won't store a hotkey without modifiers.
+            guard mods != 0 else {
+                capturingHotkey = false
+                return
+            }
+            viewModel.setHotkey(KillKeyCombo(keyCode: code, modifiers: mods))
+            capturingHotkey = false
+        })
         .onDisappear {
             // Hard-stop the recorder if the sheet is dismissed mid-record.
             Task { await viewModel.tearDown() }
@@ -65,10 +77,37 @@ struct AutoKeysRecorderV2Sheet: View {
             Text("Record auto-keys for \(account.displayName)")
                 .font(Theme.Font.heading2)
                 .foregroundStyle(Theme.Color.fg1)
-            Text("Press Record. Cmd-Tab to Roblox. Do the thing. Cmd-Tab back. Press Stop. The cycler replays your session verbatim — keys, mouse moves, clicks. Capture pauses any time Roblox isn't frontmost.")
+            Text("Click Record to arm. Cmd-Tab to Roblox. Press your record hotkey to start, do the thing, press it again to stop. The hotkey itself is filtered from the captured stream — Cmd-Tab presses too.")
                 .font(Theme.Font.bodySmall)
                 .foregroundStyle(Theme.Color.fg2)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var hotkeySection: some View {
+        HStack(spacing: Theme.Spacing.md) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("RECORD HOTKEY")
+                    .font(Theme.Font.bodySmall)
+                    .foregroundStyle(Theme.Color.fg2)
+                    .tracking(0.7)
+                Text(prettyKeyCombo(
+                    keyCode: viewModel.hotkey.keyCode,
+                    modifiers: viewModel.hotkey.modifiers
+                ))
+                    .font(Theme.Font.mono)
+                    .foregroundStyle(Theme.Color.fg1)
+                    .padding(.horizontal, Theme.Spacing.md)
+                    .padding(.vertical, 4)
+                    .background(Theme.Color.bgRaised)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
+            }
+            Spacer()
+            Button(capturingHotkey ? "Press chord…" : "Change") {
+                capturingHotkey = true
+            }
+            .buttonStyle(.bordered)
+            .disabled(viewModel.phase == .recording_armed || viewModel.phase == .recording_active)
         }
     }
 
@@ -98,7 +137,7 @@ struct AutoKeysRecorderV2Sheet: View {
                 .tracking(0.6)
                 .textCase(.uppercase)
             Spacer()
-            if viewModel.phase == .recording && viewModel.isCapturePaused {
+            if viewModel.phase == .recording_active && viewModel.isCapturePaused {
                 Text("Roblox not frontmost — Cmd-Tab to resume capture")
                     .font(Theme.Font.bodySmall)
                     .foregroundStyle(Theme.Color.stateWarn)
@@ -116,6 +155,14 @@ struct AutoKeysRecorderV2Sheet: View {
             .controlSize(.large)
             .tint(primaryButtonTint)
             .disabled(viewModel.preflightMessage != nil)
+            // Hint about the hotkey when armed — the user is going to
+            // Cmd-Tab away, so the chord display they just read is the
+            // one they need to remember.
+            if viewModel.phase == .recording_armed {
+                Text("Now Cmd-Tab to Roblox and press the chord")
+                    .font(Theme.Font.bodySmall)
+                    .foregroundStyle(Theme.Color.fg3)
+            }
             Spacer()
         }
     }
@@ -205,8 +252,12 @@ struct AutoKeysRecorderV2Sheet: View {
 
     private var statusText: String {
         switch viewModel.phase {
-        case .idle:      return "Ready to record"
-        case .recording: return viewModel.isCapturePaused ? "Paused (Roblox not frontmost)" : "Recording"
+        case .idle:
+            return "Ready to record"
+        case .recording_armed:
+            return "Armed — press chord in Roblox to start"
+        case .recording_active:
+            return viewModel.isCapturePaused ? "Paused (Roblox not frontmost)" : "Recording"
         case .stopped:
             if viewModel.actionCount == 0 { return "Nothing captured" }
             return "Stopped — \(viewModel.actionCount) actions"
@@ -215,32 +266,35 @@ struct AutoKeysRecorderV2Sheet: View {
 
     private var statusDotColor: Color {
         switch viewModel.phase {
-        case .idle:      return Theme.Color.fg3
-        case .recording: return viewModel.isCapturePaused ? Theme.Color.stateWarn : Theme.Color.stateOk
-        case .stopped:   return Theme.Color.stateOk
+        case .idle:             return Theme.Color.fg3
+        case .recording_armed:  return Theme.Color.stateWarn
+        case .recording_active: return viewModel.isCapturePaused ? Theme.Color.stateWarn : Theme.Color.stateOk
+        case .stopped:          return Theme.Color.stateOk
         }
     }
 
     private var primaryButtonTitle: String {
         switch viewModel.phase {
-        case .idle:      return "Record"
-        case .recording: return "Stop"
-        case .stopped:   return viewModel.actionCount == 0 ? "Try again" : "Re-record"
+        case .idle:             return "Record"
+        case .recording_armed:  return "Cancel"
+        case .recording_active: return "Stop"
+        case .stopped:          return viewModel.actionCount == 0 ? "Try again" : "Re-record"
         }
     }
 
     private var primaryButtonIcon: String {
         switch viewModel.phase {
-        case .idle:      return "record.circle"
-        case .recording: return "stop.circle.fill"
-        case .stopped:   return "arrow.counterclockwise"
+        case .idle:             return "record.circle"
+        case .recording_armed:  return "xmark.circle"
+        case .recording_active: return "stop.circle.fill"
+        case .stopped:          return "arrow.counterclockwise"
         }
     }
 
     private var primaryButtonTint: Color {
         switch viewModel.phase {
-        case .recording: return Theme.Color.stateDanger
-        default:         return Theme.Color.brandCyan
+        case .recording_active: return Theme.Color.stateDanger
+        default:                return Theme.Color.brandCyan
         }
     }
 
@@ -248,7 +302,7 @@ struct AutoKeysRecorderV2Sheet: View {
         switch viewModel.phase {
         case .idle, .stopped:
             await viewModel.startRecording()
-        case .recording:
+        case .recording_armed, .recording_active:
             await viewModel.stopRecording()
         }
     }
@@ -271,7 +325,11 @@ private final class RecorderV2ViewModel {
 
     enum Phase: Equatable {
         case idle
-        case recording
+        /// Recorder started, waiting for the user to press the hotkey
+        /// from Roblox. Cmd-Tab + chord transitions to active.
+        case recording_armed
+        /// Capture is live — events flow into the action stream.
+        case recording_active
         case stopped
     }
 
@@ -282,11 +340,13 @@ private final class RecorderV2ViewModel {
     var didCap: Bool = false
     var isShared: Bool = false
     var preflightMessage: String?
+    var hotkey: KillKeyCombo
 
     private let account: Account
     private let store: AccountStore
     private let runningTracker: RunningAccountTracker
     private let windowRectTracker: WindowRectTracker
+    private let settings: LaunchSettingsStore
     private let recorder: ActionStreamRecorder
     private var pollTask: Task<Void, Never>?
     private var capturedActions: [AutoKeysAction] = []
@@ -296,11 +356,18 @@ private final class RecorderV2ViewModel {
         self.store = .shared
         self.runningTracker = .shared
         self.windowRectTracker = .shared
+        self.settings = .shared
+        self.hotkey = LaunchSettingsStore.shared.recorderHotkey
         self.recorder = ActionStreamRecorder(
             source: NSEventRecorderEventSource(),
             tracker: .shared,
             frontmost: NSWorkspaceFrontmostAppProvider()
         )
+    }
+
+    func setHotkey(_ combo: KillKeyCombo) {
+        hotkey = combo
+        settings.setRecorderHotkey(combo)
     }
 
     func startRecording() async {
@@ -337,20 +404,40 @@ private final class RecorderV2ViewModel {
         elapsed = 0
         isCapturePaused = false
         didCap = false
-        phase = .recording
+        phase = .recording_armed
 
-        await recorder.start(targetPid: pid)
+        // Pass the configured hotkey so the recorder enters .armed —
+        // user presses chord from Roblox to transition to active.
+        await recorder.start(targetPid: pid, hotkey: hotkey)
 
-        // Poll the recorder at 10 Hz. Cheap async actor reads; SwiftUI
-        // re-renders on @Observable property mutation.
+        // Poll the recorder at 10 Hz. Mirror the actor's status to the
+        // sheet's Phase so armed→active and active→stopped transitions
+        // (driven by the hotkey, not by sheet buttons) flip the UI.
         pollTask?.cancel()
         pollTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
+                let status = await self.recorder.currentStatus()
                 self.actionCount = await self.recorder.currentCount()
                 self.elapsed = await self.recorder.elapsed()
                 self.isCapturePaused = await self.recorder.isCapturePaused()
                 self.didCap = await self.recorder.didReachCap()
+                switch status {
+                case .armed:
+                    self.phase = .recording_armed
+                case .active:
+                    self.phase = .recording_active
+                case .stopped:
+                    // Recorder transitioned itself via the hotkey.
+                    // Pull the captured actions and stop polling.
+                    self.capturedActions = await self.recorder.stop()
+                    self.actionCount = self.capturedActions.count
+                    self.elapsed = await self.recorder.elapsed()
+                    self.phase = .stopped
+                    return
+                case .idle:
+                    return
+                }
                 try? await Task.sleep(nanoseconds: 100_000_000)
             }
         }
@@ -385,7 +472,7 @@ private final class RecorderV2ViewModel {
     func tearDown() async {
         pollTask?.cancel()
         pollTask = nil
-        if phase == .recording {
+        if phase == .recording_armed || phase == .recording_active {
             _ = await recorder.stop()
         }
     }

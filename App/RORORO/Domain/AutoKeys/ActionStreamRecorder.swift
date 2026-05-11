@@ -5,7 +5,19 @@
 // coords to window-relative via `WindowRectTracker`, and emits a
 // `[AutoKeysAction]` stream that `ActionStreamPlayer` replays verbatim.
 //
-// Capture rules (ADR 0007 Decision 3):
+// Capture rules (ADR 0007 Decision 3 + D-3.4.1 hotkey gate):
+//   - Optional global hotkey (D-3.4.1): if `start(targetPid:hotkey:)`
+//     is called with a `KillKeyCombo`, the recorder enters `.armed`
+//     and ignores events until the hotkey is pressed — at which point
+//     it transitions to `.active`. Pressing the hotkey a second time
+//     transitions `.active` → `.stopped`. The chord's keyDown AND the
+//     paired keyUp are filtered from the captured stream so the
+//     recording never contains the chord itself. Avoids the Cmd-Tab
+//     leak: user clicks Record (recorder armed), Cmd-Tabs to Roblox,
+//     presses the chord, does their thing, presses the chord again.
+//     The Cmd press/release lands during `.armed` and is dropped.
+//     When `hotkey` is nil, the recorder skips the armed phase and
+//     starts capturing immediately (matches pre-D-3.4.1 semantics).
 //   - Frontmost-only: events arriving while the target pid is not
 //     frontmost are dropped, AND `isCapturePaused` flips true so the
 //     UI can surface "paused — Roblox not frontmost". The pause itself
@@ -34,7 +46,13 @@ public actor ActionStreamRecorder {
 
     public enum Status: Equatable, Sendable {
         case idle
-        case recording
+        /// Recorder started with a hotkey; ignoring events until the
+        /// hotkey is pressed. The Cmd-Tab and any other input the user
+        /// performs to get to Roblox lands here and is discarded.
+        case armed
+        /// Capture is live — events flow into the action stream.
+        case active
+        /// Capture ended (via the hotkey, or via explicit `stop()`).
         case stopped
     }
 
@@ -45,7 +63,10 @@ public actor ActionStreamRecorder {
 
     private var status: Status = .idle
     private var targetPid: pid_t?
+    private var hotkey: KillKeyCombo?
     private var actions: [AutoKeysAction] = []
+    /// Wall-clock (monotonic) of the transition into `.active` — the
+    /// moment capture actually starts producing actions. nil until then.
     private var startTime: TimeInterval?
     /// The clock value of the most recent appended action. Reset to nil
     /// on start, and on every capture-pause (so the next action after
@@ -69,22 +90,31 @@ public actor ActionStreamRecorder {
 
     // MARK: - Lifecycle
 
-    /// Begin recording for `targetPid`. The caller has already focused
-    /// the Roblox window and refreshed the tracker rect (the recorder
-    /// re-reads the rect on every mouse event so window moves during
-    /// recording are captured correctly).
-    public func start(targetPid: pid_t) async {
-        if status == .recording {
+    /// Begin recording for `targetPid`. When `hotkey` is non-nil, the
+    /// recorder enters `.armed` and ignores events until the user
+    /// presses the chord — that transition flips capture to `.active`.
+    /// Pass nil to skip the armed phase (matches pre-D-3.4.1 callers
+    /// and unit tests that drive events directly).
+    public func start(targetPid: pid_t, hotkey: KillKeyCombo? = nil) async {
+        if status == .armed || status == .active {
             // Idempotent — restarting clears state.
             await stop()
         }
         self.targetPid = targetPid
+        self.hotkey = hotkey
         self.actions = []
-        self.startTime = clock.now()
         self.lastActionTime = nil
         self.capturePaused = false
         self.didCap = false
-        self.status = .recording
+        if hotkey == nil {
+            // No-hotkey path: capture is live from the first event.
+            self.startTime = clock.now()
+            self.status = .active
+        } else {
+            // Wait for the chord. startTime sets on transition to active.
+            self.startTime = nil
+            self.status = .armed
+        }
 
         let stream = source.start()
         ingestTask = Task { [weak self] in
@@ -121,9 +151,39 @@ public actor ActionStreamRecorder {
     // MARK: - Ingest
 
     private func ingest(event: RecorderEvent) async {
-        guard status == .recording else { return }
+        guard status == .armed || status == .active else { return }
         guard !event.isSelfTagged else { return }
         guard let target = targetPid else { return }
+
+        // Hotkey gate — runs BEFORE the frontmost filter so the chord
+        // works globally (user might be in Roblox OR cmd-tabbed to
+        // RORORO when they press it). Match against keyDown only; the
+        // paired keyUp gets dropped below so the chord never appears
+        // in the captured stream.
+        if let hotkey, matchesHotkey(event: event, hotkey: hotkey) {
+            if case .keyDown = event.kind {
+                switch status {
+                case .armed:
+                    // Transition to active. Reset the dt clock so the
+                    // first captured action gets dt=0.
+                    status = .active
+                    startTime = clock.now()
+                    lastActionTime = nil
+                case .active:
+                    // Second chord press ends the recording. The
+                    // event source stays alive until stop() is called
+                    // by the view-model, but no further events are
+                    // captured.
+                    status = .stopped
+                case .idle, .stopped:
+                    return
+                }
+            }
+            // Drop both keyDown and keyUp of the chord from the stream.
+            return
+        }
+
+        guard status == .active else { return }
 
         // Frontmost gating — capture pauses without recording the gap.
         // Re-read every event because focus changes don't fire on every
@@ -195,5 +255,20 @@ public actor ActionStreamRecorder {
 
     private func relative(_ position: CGPoint, in rect: CGRect) -> CGPoint {
         CGPoint(x: position.x - rect.origin.x, y: position.y - rect.origin.y)
+    }
+
+    /// True iff the event is the bare key of the configured hotkey
+    /// chord — keyDown or keyUp of `hotkey.keyCode` while the held
+    /// modifiers match `hotkey.modifiers`. The modifier match is
+    /// equality (not subset) so a stray Cmd press doesn't spuriously
+    /// trigger Ctrl+Opt+Shift+P.
+    private func matchesHotkey(event: RecorderEvent, hotkey: KillKeyCombo) -> Bool {
+        let keyCode: CGKeyCode
+        switch event.kind {
+        case let .keyDown(kc): keyCode = kc
+        case let .keyUp(kc):   keyCode = kc
+        default: return false
+        }
+        return keyCode == hotkey.keyCode && event.modifiers == hotkey.modifiers
     }
 }
