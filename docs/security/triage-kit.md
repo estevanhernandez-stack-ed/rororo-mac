@@ -185,5 +185,5 @@ These are one-time setup tasks. Tick when done.
 - [x] GPG keypair generated for estevan@626labs.dev. Fingerprint inlined in `SECURITY.md`. *(Confirmed 2026-05-11. Fingerprint `E52F 4A54 4426 1AE7 0D12  D817 B928 75D4 F623 6B8A`.)*
 - [x] Public key uploaded to keys.openpgp.org (email verification clicked). *(Confirmed 2026-05-11. Verified via `curl https://keys.openpgp.org/vks/v1/by-fingerprint/E52F4A5444261AE70D12D817B92875D4F6236B8A` — UID present, email-verified.)*
 - [x] Public key added to GitHub. *(Confirmed 2026-05-11. Verified via `gh api /user/gpg_keys` — key id `B92875D4F6236B8A`, email `estevan@626labs.dev` verified on the account. Discoverable at github.com/estevanhernandez-stack-ed.gpg.)*
-- [ ] Private key backup exported to 1Password; export file deleted from disk.
+- [x] Private key backup exported to 1Password; export file deleted from disk. *(Confirmed 2026-05-11. Local keyring intact; on-disk export at /tmp/626labs-pgp-private.asc removed.)*
 - [ ] First-report dry-run with a fake report (optional but recommended) — walk through this kit end-to-end before a real one arrives.
