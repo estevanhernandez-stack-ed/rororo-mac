@@ -8,7 +8,11 @@ The latest GitHub release is the only supported version. Older releases do not r
 
 ## Reporting a vulnerability
 
-**Email:** estevan.hernandez@gmail.com.
+Two ways to report. Either works; both reach the maintainer privately.
+
+**Preferred — GitHub Private Vulnerability Reporting:** [open a private advisory draft](https://github.com/estevanhernandez-stack-ed/rororo-mac/security/advisories/new). Reports stay private until you and the maintainer agree to publish. The conversation, code review, and CVE issuance all happen inside the advisory. Fastest path for researchers who want clean attribution and a CVE.
+
+**Email:** estevan@626labs.dev. Use this if GitHub PVR doesn't fit your workflow (or if the GitHub account itself is part of the report).
 
 Please include:
 
@@ -66,4 +70,6 @@ If you're unsure whether something falls under safe harbor, email first and ask.
 
 - [`docs/security-audit.md`](docs/security-audit.md) — posture statement.
 - [`docs/generated/threat-model.md`](docs/generated/threat-model.md) — STRIDE-shaped threat model.
+- [`docs/security/severity-rubric.md`](docs/security/severity-rubric.md) — severity buckets + fix windows applied to reports.
+- [`docs/security/disclosure-runbook.md`](docs/security/disclosure-runbook.md) — maintainer-facing operational runbook for the policy on this page.
 - [`docs/PRIVACY.md`](docs/PRIVACY.md) — what's stored, what's transmitted.

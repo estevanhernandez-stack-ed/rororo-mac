@@ -360,7 +360,7 @@ Each candidate's `Info.plist` must report `CFBundleIdentifier` starting with `co
 There is no escalation tree — this is a one-maintainer open-source project. The intake path is:
 
 1. **User-reported issue** → GitHub Issue on `estevanhernandez-stack-ed/rororo-mac`. Maintainer triages.
-2. **Privacy / security concern** → email `estevan.hernandez@gmail.com` (per `docs/PRIVACY.md` contact) so it doesn't sit in a public issue thread.
+2. **Privacy / security concern** → email `estevan@626labs.dev` (per `docs/PRIVACY.md` contact) so it doesn't sit in a public issue thread.
 3. **Sparkle key compromise suspected** → immediate manual rotation per §4.4 (one-way break — last resort).
 
 <!-- Source: docs/PRIVACY.md, README.md -->

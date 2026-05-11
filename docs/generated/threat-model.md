@@ -177,7 +177,7 @@ Decisions captured 2026-05-11. The threats below have partial or no mitigation. 
 
 90-day private disclosure window. Vulnerabilities reported privately get triaged on the maintainer's schedule; public disclosure follows either a shipped fix or 90 calendar days from initial report, whichever lands first. Good-faith research is welcome; we won't pursue legal action against researchers who report responsibly and don't access more than necessary to demonstrate the issue.
 
-- **Contact:** estevan.hernandez@gmail.com.
+- **Contact:** estevan@626labs.dev.
 - **Scope:** the RORORO Mac app and its release pipeline. Out of scope: Roblox Corporation's own infrastructure (report those to Roblox).
 - **Out of scope by design:** see [Out of scope / non-goals](#out-of-scope--non-goals).
 - A canonical [`SECURITY.md`](../../SECURITY.md) at the repo root captures the same policy in the GitHub-standard location.
