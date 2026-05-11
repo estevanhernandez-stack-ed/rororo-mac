@@ -12,8 +12,16 @@ import CoreGraphics
 import Foundation
 
 public protocol KeyEventPoster: Sendable {
-    /// Post a complete press: keyDown, ~20ms, keyUp.
+    /// Post a complete press: keyDown, ~20ms, keyUp. Used by the legacy
+    /// step-list path (ADR 0004) where every step is a discrete press.
     func post(keyCode: CGKeyCode) async
+    /// Post a standalone keyDown with the given modifier flags. Used by
+    /// `ActionStreamPlayer` (ADR 0007) where down/up are separate
+    /// actions in the recorded stream — overlap is the whole point.
+    func postDown(keyCode: CGKeyCode, modifiers: UInt) async
+    /// Post a standalone keyUp paired with a prior `postDown`. The
+    /// player guarantees pairing on cancellation cleanup.
+    func postUp(keyCode: CGKeyCode, modifiers: UInt) async
 }
 
 public struct CGEventKeyEventPoster: KeyEventPoster {
@@ -41,5 +49,23 @@ public struct CGEventKeyEventPoster: KeyEventPoster {
             up.setIntegerValueField(.eventSourceUserData, value: AutoKeysCyclerSourceTag)
             up.post(tap: .cghidEventTap)
         }
+    }
+
+    public func postDown(keyCode: CGKeyCode, modifiers: UInt) async {
+        guard let down = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true) else { return }
+        if modifiers != 0 {
+            down.flags = CGEventFlags(rawValue: UInt64(modifiers))
+        }
+        down.setIntegerValueField(.eventSourceUserData, value: AutoKeysCyclerSourceTag)
+        down.post(tap: .cghidEventTap)
+    }
+
+    public func postUp(keyCode: CGKeyCode, modifiers: UInt) async {
+        guard let up = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) else { return }
+        if modifiers != 0 {
+            up.flags = CGEventFlags(rawValue: UInt64(modifiers))
+        }
+        up.setIntegerValueField(.eventSourceUserData, value: AutoKeysCyclerSourceTag)
+        up.post(tap: .cghidEventTap)
     }
 }

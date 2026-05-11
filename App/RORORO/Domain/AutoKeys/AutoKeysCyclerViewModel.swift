@@ -344,9 +344,17 @@ public final class AutoKeysCyclerViewModel {
             }
         }
 
-        return store.accounts.compactMap { account in
+        // ADR 0007 Decision 7 — resolve sharing references. An account
+        // with `autoKeysSourceAccountId` set substitutes the source's
+        // sequence; orphaned + non-shared references skip the consumer
+        // (the resolver returns nil so the compactMap drops it).
+        let allAccounts = store.accounts
+        return allAccounts.compactMap { account in
             guard isEligible(account) else { return nil }
-            guard let sequence = account.autoKeys, !sequence.isEmpty else { return nil }
+            guard let sequence = AutoKeysSharingResolver.playableSequence(
+                account: account,
+                all: allAccounts
+            ) else { return nil }
             guard let pid = tracker.pid(for: account.userId) else { return nil }
             return AutoKeysCycler.Target(
                 pid: pid,

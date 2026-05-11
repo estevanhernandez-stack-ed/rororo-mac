@@ -20,6 +20,18 @@ final class AutoKeysCyclerTests: XCTestCase {
             lock.lock(); defer { lock.unlock() }
             posted.append(keyCode)
         }
+        // D-3.2: split-event hooks for the ActionStreamPlayer path. These
+        // existing-cycler tests only exercise the legacy `post()` path,
+        // so just append to the same buffer for crash-safety — assertions
+        // ignore down/up events here. Player-specific tests use their
+        // own recording fake.
+        func postDown(keyCode: CGKeyCode, modifiers: UInt) async {
+            lock.lock(); defer { lock.unlock() }
+            posted.append(keyCode)
+        }
+        func postUp(keyCode: CGKeyCode, modifiers: UInt) async {
+            // No-op — combined-press tests don't observe the up phase.
+        }
         func snapshot() -> [CGKeyCode] {
             lock.lock(); defer { lock.unlock() }
             return posted
@@ -543,6 +555,114 @@ final class AutoKeysCyclerTests: XCTestCase {
         await cycler.stop()
     }
 
+    // MARK: - D-3.2 — action-stream variant dispatch (ADR 0007)
+
+    func testStart_StreamVariant_RunsActionsThroughPlayer() async throws {
+        // Recording poster captures both legacy `post()` and the split
+        // down/up calls — only down/up matter for the stream path.
+        let poster = FakeKeyEventPoster()
+        let mouse = StreamMouseRecorder()
+        let focuser = FakeWindowFocuser()
+        let assertion = FakePowerAssertion()
+        let sleeper = RecordingSleeper()
+
+        // Wire a tracker pre-populated with rect for the test pid so the
+        // player can translate window-relative coords.
+        let provider = FakeAXRectProvider()
+        provider.setRect(CGRect(x: 100, y: 100, width: 800, height: 600), for: 200)
+        let tracker = WindowRectTracker(provider: provider)
+        await tracker.refresh(pid: 200)
+
+        let cycler = AutoKeysCycler(
+            poster: poster,
+            mousePoster: mouse,
+            focuser: focuser,
+            assertion: assertion,
+            sleeper: sleeper,
+            tracker: tracker,
+            frontmostAppProvider: focuser
+        )
+
+        let seq = AutoKeysSequence(actions: [
+            .keyDown(keyCode: 13, modifiers: 0, dt: 0),
+            .mouseMove(rel: CGPoint(x: 50, y: 50), dt: 0.001),
+            .keyUp(keyCode: 13, modifiers: 0, dt: 0.001),
+        ])!
+
+        try await cycler.start(
+            accounts: [.init(pid: 200, sequence: seq, label: "A")],
+            loopDelay: 0.001
+        )
+
+        // Wait until the mouseMove lands at least twice (= two full
+        // iterations through the action stream).
+        await waitFor {
+            mouse.movesSnapshot().count >= 2
+        }
+
+        await cycler.stop()
+
+        let moves = mouse.movesSnapshot()
+        XCTAssertGreaterThanOrEqual(moves.count, 2)
+        // Window origin (100, 100) + rel (50, 50) = absolute (150, 150).
+        XCTAssertEqual(moves.first, CGPoint(x: 150, y: 150))
+    }
+
+    func testStart_StreamVariant_TargetGoneDuringFirstAction_SkipsAndContinues() async throws {
+        let poster = FakeKeyEventPoster()
+        let mouse = StreamMouseRecorder()
+        let focuser = FakeWindowFocuser()
+        let assertion = FakePowerAssertion()
+        let sleeper = RecordingSleeper()
+
+        // Tracker primed for pid 100 (will be cleared mid-flight) and
+        // pid 200 (stays alive).
+        let provider = FakeAXRectProvider()
+        provider.setRect(CGRect(x: 0, y: 0, width: 800, height: 600), for: 100)
+        provider.setRect(CGRect(x: 1000, y: 0, width: 800, height: 600), for: 200)
+        let tracker = WindowRectTracker(provider: provider)
+        await tracker.refresh(pid: 100)
+        await tracker.refresh(pid: 200)
+
+        let cycler = AutoKeysCycler(
+            poster: poster,
+            mousePoster: mouse,
+            focuser: focuser,
+            assertion: assertion,
+            sleeper: sleeper,
+            tracker: tracker,
+            frontmostAppProvider: focuser
+        )
+
+        // Drop pid 100 from the rect cache + flag focus to fail so the
+        // first thing player sees is target-gone.
+        provider.setRect(nil, for: 100)
+        await tracker.forget(pid: 100)
+
+        let streamSeq = AutoKeysSequence(actions: [
+            .mouseMove(rel: CGPoint(x: 10, y: 10), dt: 0),
+        ])!
+        let legacySeq = AutoKeysSequence(steps: [AutoKeysStep(keyCode: 49, delayAfter: 0.001)])!
+
+        try await cycler.start(
+            accounts: [
+                .init(pid: 100, sequence: streamSeq, label: "Gone"),
+                .init(pid: 200, sequence: legacySeq, label: "Alive"),
+            ],
+            loopDelay: 0.001
+        )
+
+        // Wait for at least one legacy keystroke (49) — proving the
+        // cycler didn't get stuck on the gone target.
+        await waitFor { poster.snapshot().contains(49) }
+
+        await cycler.stop()
+
+        let mouseEvents = mouse.movesSnapshot()
+        XCTAssertTrue(mouseEvents.isEmpty, "Mouse posted despite target gone: \(mouseEvents)")
+        XCTAssertGreaterThanOrEqual(poster.snapshot().filter { $0 == 49 }.count, 1)
+    }
+
     func testSelfTaggedEvents_DoNotPauseTheCycler() async throws {
         let poster = FakeKeyEventPoster()
         let assertion = FakePowerAssertion()
@@ -601,5 +721,29 @@ private final class LongSleeper: Sleeper, @unchecked Sendable {
     func sleep(seconds: TimeInterval) async throws {
         lock.lock(); _started = true; lock.unlock()
         try await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+    }
+}
+
+/// D-3.2 — minimal MouseEventPoster recording fake for cycler-level
+/// dispatch tests. Player-internal coord translation lives in
+/// ActionStreamPlayerTests; this fake just confirms the cycler routed
+/// stream variants through the player at all.
+final class StreamMouseRecorder: MouseEventPoster, @unchecked Sendable {
+    private let lock = NSLock()
+    private var moves: [CGPoint] = []
+    func postMove(to position: CGPoint) async {
+        lock.lock(); moves.append(position); lock.unlock()
+    }
+    func postDown(button: MouseButton, at position: CGPoint) async {
+        // Not exercised by current tests; record into the same buffer
+        // for crash safety.
+        lock.lock(); moves.append(position); lock.unlock()
+    }
+    func postUp(button: MouseButton, at position: CGPoint) async {
+        lock.lock(); moves.append(position); lock.unlock()
+    }
+    func movesSnapshot() -> [CGPoint] {
+        lock.lock(); defer { lock.unlock() }
+        return moves
     }
 }

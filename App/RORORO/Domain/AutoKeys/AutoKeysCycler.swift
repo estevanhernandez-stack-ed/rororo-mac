@@ -84,6 +84,7 @@ public actor AutoKeysCycler {
 
     public static let shared = AutoKeysCycler(
         poster: CGEventKeyEventPoster(),
+        mousePoster: CGEventMouseEventPoster(),
         focuser: NSRunningApplicationFocuser(),
         assertion: IOPMPowerAssertion(),
         sleeper: TaskSleeper(),
@@ -93,6 +94,9 @@ public actor AutoKeysCycler {
     )
 
     private let poster: KeyEventPoster
+    /// D-3.2 — mouse-event posting for the action-stream player. The
+    /// legacy step path doesn't touch this. Tests pass a recording fake.
+    private let mousePoster: MouseEventPoster
     private let focuser: WindowFocuser
     private let assertion: PowerAssertion
     private let sleeper: Sleeper
@@ -140,6 +144,7 @@ public actor AutoKeysCycler {
 
     public init(
         poster: KeyEventPoster,
+        mousePoster: MouseEventPoster = CGEventMouseEventPoster(),
         focuser: WindowFocuser,
         assertion: PowerAssertion,
         sleeper: Sleeper,
@@ -148,6 +153,7 @@ public actor AutoKeysCycler {
         frontmostAppProvider: FrontmostAppProvider = NSWorkspaceFrontmostAppProvider()
     ) {
         self.poster = poster
+        self.mousePoster = mousePoster
         self.focuser = focuser
         self.assertion = assertion
         self.sleeper = sleeper
@@ -346,38 +352,29 @@ public actor AutoKeysCycler {
                 }
                 // D-1: refresh the rect cache for this target. The
                 // safety monitor uses this to know whether mouseMoved
-                // is inside a Roblox window we're cycling.
+                // is inside a Roblox window we're cycling. The player
+                // also reads this cache to translate window-relative
+                // mouse coords to absolute screen coords (D-3.2).
                 await tracker?.refresh(pid: target.pid)
-                stepLoop: for step in target.sequence.steps {
-                    if Task.isCancelled { return }
-                    // Repeat-N support — fire the key `step.repeatCount`
-                    // times back-to-back, with a fixed 0.7 s gap between
-                    // presses (Roblox coalesces faster than that). The
-                    // long delay-after still applies once after the
-                    // last press, before moving to the next step.
-                    for repeatIdx in 0..<step.repeatCount {
-                        if Task.isCancelled { return }
-                        NSLog("[RORORO] cycler: posting keyCode=\(step.keyCode) (\(repeatIdx + 1)/\(step.repeatCount)) to pid=\(target.pid)")
-                        progressCallback?(target.label, nextLabel, step.keyCode)
-                        await poster.post(keyCode: step.keyCode)
-                        // D-1: post-fire focus-theft check. If the
-                        // frontmost pid changed between the focus call
-                        // and this post, the keystroke landed in the
-                        // wrong window. Abort the rest of this target's
-                        // sequence — the cycle continues with the next
-                        // target on the next outer iteration.
-                        let stillFront = await frontmostAppProvider.currentFrontmostPid()
-                        if stillFront != target.pid {
-                            NSLog("[RORORO] cycler: focus moved away from pid=\(target.pid) mid-sequence (now=\(stillFront ?? -1)) — aborting remaining steps for this target")
-                            break stepLoop
-                        }
-                        // Inter-press gap (only between presses; the
-                        // last one yields directly into delayAfter).
-                        if repeatIdx < step.repeatCount - 1 {
-                            try? await sleeper.sleep(seconds: AutoKeysStep.intraRepeatInterval)
-                        }
-                    }
-                    try? await sleeper.sleep(seconds: step.delayAfter)
+
+                // D-3.2 — dispatch on sequence variant. Legacy step
+                // lists still flow through the original loop body;
+                // action streams hand off to ActionStreamPlayer.
+                switch target.sequence.variant {
+                case let .legacy(steps):
+                    let outcome = await runLegacyStepLoop(
+                        steps: steps,
+                        target: target,
+                        nextLabel: nextLabel
+                    )
+                    if outcome == .cancelled { return }
+                case let .stream(actions):
+                    let outcome = await runStreamPlayback(
+                        actions: actions,
+                        target: target,
+                        nextLabel: nextLabel
+                    )
+                    if outcome == .cancelled { return }
                 }
             }
             // Between iterations: tell the UI we're between targets.
@@ -425,6 +422,103 @@ public actor AutoKeysCycler {
                 // user must explicitly resume. Poll until state changes.
                 try? await sleeper.sleep(seconds: 0.25)
             }
+        }
+    }
+
+    // MARK: - Per-target playback
+
+    /// Outcome of one target's sequence playback within the outer loop.
+    /// `.completed` and `.skipped` continue to the next target;
+    /// `.cancelled` returns from `runLoop` entirely.
+    private enum TargetOutcome {
+        case completed
+        case skipped       // focus theft, target gone, etc — same-iter continue
+        case cancelled     // Task.isCancelled — bail out of runLoop
+    }
+
+    /// Legacy step-list path — the ADR 0004 loop hoisted out of the
+    /// outer `runLoop` so the variant dispatch above stays readable.
+    /// Behavior is identical to the pre-D-3.2 inline body.
+    private func runLegacyStepLoop(
+        steps: [AutoKeysStep],
+        target: Target,
+        nextLabel: String?
+    ) async -> TargetOutcome {
+        stepLoop: for step in steps {
+            if Task.isCancelled { return .cancelled }
+            // Repeat-N support — fire the key `step.repeatCount`
+            // times back-to-back, with a fixed 0.7 s gap between
+            // presses (Roblox coalesces faster than that). The
+            // long delay-after still applies once after the last
+            // press, before moving to the next step.
+            for repeatIdx in 0..<step.repeatCount {
+                if Task.isCancelled { return .cancelled }
+                NSLog("[RORORO] cycler: posting keyCode=\(step.keyCode) (\(repeatIdx + 1)/\(step.repeatCount)) to pid=\(target.pid)")
+                progressCallback?(target.label, nextLabel, step.keyCode)
+                await poster.post(keyCode: step.keyCode)
+                // D-1: post-fire focus-theft check.
+                let stillFront = await frontmostAppProvider.currentFrontmostPid()
+                if stillFront != target.pid {
+                    NSLog("[RORORO] cycler: focus moved away from pid=\(target.pid) mid-sequence (now=\(stillFront ?? -1)) — aborting remaining steps for this target")
+                    break stepLoop
+                }
+                // Inter-press gap (only between presses; the last
+                // one yields directly into delayAfter).
+                if repeatIdx < step.repeatCount - 1 {
+                    try? await sleeper.sleep(seconds: AutoKeysStep.intraRepeatInterval)
+                }
+            }
+            try? await sleeper.sleep(seconds: step.delayAfter)
+        }
+        return .completed
+    }
+
+    /// Action-stream path (ADR 0007 / D-3.2). Builds an
+    /// `ActionStreamPlayer` per target and delegates the per-action
+    /// loop to it; outcome maps back to TargetOutcome for the outer
+    /// loop's continuation logic.
+    private func runStreamPlayback(
+        actions: [AutoKeysAction],
+        target: Target,
+        nextLabel: String?
+    ) async -> TargetOutcome {
+        // The player needs a live tracker to translate window-relative
+        // coords. If the cycler was constructed without one (tests that
+        // skip the rect substrate), skip the target — action-stream
+        // playback fundamentally needs the tracker.
+        guard let tracker else {
+            NSLog("[RORORO] cycler: no tracker wired; skipping action-stream target pid=\(target.pid)")
+            return .skipped
+        }
+        progressCallback?(target.label, nextLabel, nil)
+        let player = ActionStreamPlayer(
+            keyPoster: poster,
+            mousePoster: mousePoster,
+            sleeper: sleeper,
+            tracker: tracker
+        )
+        let provider = frontmostAppProvider
+        let targetPid = target.pid
+        let outcome = await player.play(
+            actions: actions,
+            targetPid: targetPid,
+            focusGuard: { @Sendable in
+                let front = await provider.currentFrontmostPid()
+                return front == targetPid
+            }
+        )
+        switch outcome {
+        case .completed:
+            return .completed
+        case .targetGone:
+            // ADR 0007 Decision 2 — drop the dead pid from the cache
+            // so the safety monitor stops gating against a stale rect.
+            await tracker.forget(pid: targetPid)
+            return .skipped
+        case .focusStolen:
+            return .skipped
+        case .cancelled:
+            return .cancelled
         }
     }
 
