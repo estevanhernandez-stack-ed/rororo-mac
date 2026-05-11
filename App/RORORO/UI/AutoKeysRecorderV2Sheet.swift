@@ -1,0 +1,392 @@
+// AutoKeysRecorderV2Sheet.swift
+// Modal recorder for one account's full-fidelity action stream
+// (ADR 0007 Decision 3 / Wave D-3.4). Record → user performs the
+// sequence in Roblox → Stop → review + Save / Discard.
+//
+// Frontmost-only capture (Decision 3): the recorder only ingests events
+// while the target Roblox PID is frontmost. While the user is inside
+// RORORO (this sheet visible), capture pauses — the indicator surfaces
+// "PAUSED — Roblox not frontmost" so the user knows to Cmd-Tab back.
+//
+// Replaces the legacy `AutoKeysRecorderSheet` as the per-row chip's
+// entry point. The legacy sheet's source stays in the codebase for any
+// in-flight migration; D-3.6 removes it from the surface entirely.
+//
+// View-model lives in this file (private to the sheet) — owns an
+// `ActionStreamRecorder`, polls its async state at 10 Hz, exposes
+// SwiftUI-friendly properties. Persistence funnels through the
+// existing `AccountStore.setAutoKeys` so legacy + stream variants
+// share one storage path.
+
+import AppKit
+import CoreGraphics
+import Observation
+import SwiftUI
+
+struct AutoKeysRecorderV2Sheet: View {
+
+    @Binding var isPresented: Bool
+    let account: Account
+
+    @State private var viewModel: RecorderV2ViewModel
+
+    init(isPresented: Binding<Bool>, account: Account) {
+        self._isPresented = isPresented
+        self.account = account
+        self._viewModel = State(initialValue: RecorderV2ViewModel(account: account))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+            header
+            divider
+            legacyNotice
+            statusBlock
+            recordButton
+            counters
+            divider
+            postRecordControls
+            Spacer(minLength: 0)
+            footer
+        }
+        .padding(Theme.Spacing.lg)
+        .frame(width: 520, height: 540)
+        .background(Theme.Color.bgPage)
+        .onDisappear {
+            // Hard-stop the recorder if the sheet is dismissed mid-record.
+            Task { await viewModel.tearDown() }
+        }
+    }
+
+    // MARK: - Sections
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+            Text("Record auto-keys for \(account.displayName)")
+                .font(Theme.Font.heading2)
+                .foregroundStyle(Theme.Color.fg1)
+            Text("Press Record. Cmd-Tab to Roblox. Do the thing. Cmd-Tab back. Press Stop. The cycler replays your session verbatim — keys, mouse moves, clicks. Capture pauses any time Roblox isn't frontmost.")
+                .font(Theme.Font.bodySmall)
+                .foregroundStyle(Theme.Color.fg2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder
+    private var legacyNotice: some View {
+        if let existing = account.autoKeys, existing.isLegacy, !existing.isEmpty {
+            HStack(spacing: Theme.Spacing.sm) {
+                Image(systemName: "info.circle.fill")
+                    .foregroundStyle(Theme.Color.stateWarn)
+                Text("This account has a legacy \(existing.steps.count)-key recording. Saving here overwrites it with a full action stream — keys + mouse.")
+                    .font(Theme.Font.bodySmall)
+                    .foregroundStyle(Theme.Color.fg2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(Theme.Spacing.sm)
+            .background(Theme.Color.bgRaised)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
+        }
+    }
+
+    private var statusBlock: some View {
+        HStack(spacing: Theme.Spacing.sm) {
+            Circle().fill(statusDotColor).frame(width: 8, height: 8)
+            Text(statusText)
+                .font(Theme.Font.mono)
+                .foregroundStyle(Theme.Color.fg1)
+                .tracking(0.6)
+                .textCase(.uppercase)
+            Spacer()
+            if viewModel.phase == .recording && viewModel.isCapturePaused {
+                Text("Roblox not frontmost — Cmd-Tab to resume capture")
+                    .font(Theme.Font.bodySmall)
+                    .foregroundStyle(Theme.Color.stateWarn)
+            }
+        }
+    }
+
+    private var recordButton: some View {
+        HStack {
+            Button(action: { Task { await primaryAction() } }) {
+                Label(primaryButtonTitle, systemImage: primaryButtonIcon)
+                    .frame(minWidth: 160)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .tint(primaryButtonTint)
+            .disabled(viewModel.preflightMessage != nil)
+            Spacer()
+        }
+    }
+
+    @ViewBuilder
+    private var counters: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            HStack {
+                Text("ACTIONS")
+                    .font(Theme.Font.bodySmall)
+                    .foregroundStyle(Theme.Color.fg2)
+                    .tracking(0.7)
+                Spacer()
+                Text("\(viewModel.actionCount) / \(AutoKeysSequence.maxActionCount)")
+                    .font(Theme.Font.mono)
+                    .foregroundStyle(viewModel.didCap ? Theme.Color.stateDanger : Theme.Color.fg1)
+            }
+            HStack {
+                Text("ELAPSED")
+                    .font(Theme.Font.bodySmall)
+                    .foregroundStyle(Theme.Color.fg2)
+                    .tracking(0.7)
+                Spacer()
+                Text(formatSeconds(viewModel.elapsed))
+                    .font(Theme.Font.mono)
+                    .foregroundStyle(Theme.Color.fg1)
+            }
+            if viewModel.didCap {
+                Text("Hit the \(AutoKeysSequence.maxActionCount)-action cap — further events are dropped. Stop and re-record a shorter sequence if you need a shorter loop.")
+                    .font(Theme.Font.bodySmall)
+                    .foregroundStyle(Theme.Color.stateDanger)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let preflight = viewModel.preflightMessage {
+                Text(preflight)
+                    .font(Theme.Font.bodySmall)
+                    .foregroundStyle(Theme.Color.stateDanger)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var postRecordControls: some View {
+        if viewModel.phase == .stopped {
+            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                Toggle(isOn: $viewModel.isShared) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Share this recording")
+                            .font(Theme.Font.body)
+                            .foregroundStyle(Theme.Color.fg1)
+                        Text("Other accounts can opt in to use this recording instead of recording their own.")
+                            .font(Theme.Font.bodySmall)
+                            .foregroundStyle(Theme.Color.fg3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .toggleStyle(.switch)
+            }
+        }
+    }
+
+    private var footer: some View {
+        HStack {
+            Button("Cancel") {
+                Task {
+                    await viewModel.discard()
+                    isPresented = false
+                }
+            }
+            Spacer()
+            if viewModel.phase == .stopped && viewModel.actionCount > 0 {
+                Button("Save") {
+                    viewModel.save()
+                    isPresented = false
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+    }
+
+    private var divider: some View {
+        Rectangle().fill(Theme.Color.bgRaised).frame(height: 1)
+    }
+
+    // MARK: - Derived
+
+    private var statusText: String {
+        switch viewModel.phase {
+        case .idle:      return "Ready to record"
+        case .recording: return viewModel.isCapturePaused ? "Paused (Roblox not frontmost)" : "Recording"
+        case .stopped:
+            if viewModel.actionCount == 0 { return "Nothing captured" }
+            return "Stopped — \(viewModel.actionCount) actions"
+        }
+    }
+
+    private var statusDotColor: Color {
+        switch viewModel.phase {
+        case .idle:      return Theme.Color.fg3
+        case .recording: return viewModel.isCapturePaused ? Theme.Color.stateWarn : Theme.Color.stateOk
+        case .stopped:   return Theme.Color.stateOk
+        }
+    }
+
+    private var primaryButtonTitle: String {
+        switch viewModel.phase {
+        case .idle:      return "Record"
+        case .recording: return "Stop"
+        case .stopped:   return viewModel.actionCount == 0 ? "Try again" : "Re-record"
+        }
+    }
+
+    private var primaryButtonIcon: String {
+        switch viewModel.phase {
+        case .idle:      return "record.circle"
+        case .recording: return "stop.circle.fill"
+        case .stopped:   return "arrow.counterclockwise"
+        }
+    }
+
+    private var primaryButtonTint: Color {
+        switch viewModel.phase {
+        case .recording: return Theme.Color.stateDanger
+        default:         return Theme.Color.brandCyan
+        }
+    }
+
+    private func primaryAction() async {
+        switch viewModel.phase {
+        case .idle, .stopped:
+            await viewModel.startRecording()
+        case .recording:
+            await viewModel.stopRecording()
+        }
+    }
+
+    private func formatSeconds(_ seconds: TimeInterval) -> String {
+        if seconds < 60 {
+            return String(format: "%.1fs", seconds)
+        }
+        let m = Int(seconds) / 60
+        let s = Int(seconds) % 60
+        return "\(m)m \(s)s"
+    }
+}
+
+// MARK: - View model
+
+@MainActor
+@Observable
+private final class RecorderV2ViewModel {
+
+    enum Phase: Equatable {
+        case idle
+        case recording
+        case stopped
+    }
+
+    var phase: Phase = .idle
+    var actionCount: Int = 0
+    var elapsed: TimeInterval = 0
+    var isCapturePaused: Bool = false
+    var didCap: Bool = false
+    var isShared: Bool = false
+    var preflightMessage: String?
+
+    private let account: Account
+    private let store: AccountStore
+    private let runningTracker: RunningAccountTracker
+    private let windowRectTracker: WindowRectTracker
+    private let recorder: ActionStreamRecorder
+    private var pollTask: Task<Void, Never>?
+    private var capturedActions: [AutoKeysAction] = []
+
+    init(account: Account) {
+        self.account = account
+        self.store = .shared
+        self.runningTracker = .shared
+        self.windowRectTracker = .shared
+        self.recorder = ActionStreamRecorder(
+            source: NSEventRecorderEventSource(),
+            tracker: .shared,
+            frontmost: NSWorkspaceFrontmostAppProvider()
+        )
+    }
+
+    func startRecording() async {
+        preflightMessage = nil
+        // Permission preflight — same TCC buckets as the cycler.
+        // Accessibility is needed for the cycler's later replay; Input
+        // Monitoring is needed for the global NSEvent monitor.
+        if AutoKeysPermissions.accessibilityStatus() != .granted {
+            preflightMessage = "Recorder needs Accessibility permission. Grant it in System Settings → Privacy & Security → Accessibility and try again."
+            return
+        }
+        if AutoKeysPermissions.inputMonitoringStatus() != .granted {
+            preflightMessage = "Recorder needs Input Monitoring to capture events globally. Grant it in System Settings → Privacy & Security → Input Monitoring and try again."
+            return
+        }
+
+        // Make sure the account has a running Roblox window. The
+        // frontmost-only filter means there's no point starting capture
+        // against a pid that doesn't exist — the user would see
+        // permanent "paused" with no way to record anything.
+        runningTracker.backfillFromRunningProcesses()
+        guard let pid = runningTracker.pid(for: account.userId) else {
+            preflightMessage = "No running Roblox window for this account. Launch \(account.displayName) from the row first, then re-open this sheet."
+            return
+        }
+
+        // Refresh the rect cache so the recorder can translate mouse
+        // coords from the first action. The cycler usually does this on
+        // focus, but the recorder runs without the cycler.
+        await windowRectTracker.refresh(pid: pid)
+
+        capturedActions = []
+        actionCount = 0
+        elapsed = 0
+        isCapturePaused = false
+        didCap = false
+        phase = .recording
+
+        await recorder.start(targetPid: pid)
+
+        // Poll the recorder at 10 Hz. Cheap async actor reads; SwiftUI
+        // re-renders on @Observable property mutation.
+        pollTask?.cancel()
+        pollTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                self.actionCount = await self.recorder.currentCount()
+                self.elapsed = await self.recorder.elapsed()
+                self.isCapturePaused = await self.recorder.isCapturePaused()
+                self.didCap = await self.recorder.didReachCap()
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+        }
+    }
+
+    func stopRecording() async {
+        pollTask?.cancel()
+        pollTask = nil
+        capturedActions = await recorder.stop()
+        actionCount = capturedActions.count
+        // Pull one last elapsed read so the post-record number is fresh.
+        elapsed = await recorder.elapsed()
+        phase = .stopped
+    }
+
+    func save() {
+        guard !capturedActions.isEmpty else { return }
+        guard let sequence = AutoKeysSequence(
+            actions: capturedActions,
+            isShared: isShared
+        ) else {
+            preflightMessage = "Recording exceeded the \(AutoKeysSequence.maxActionCount)-action cap. Re-record shorter."
+            return
+        }
+        store.setAutoKeys(userId: account.userId, sequence: sequence)
+    }
+
+    func discard() async {
+        await tearDown()
+    }
+
+    func tearDown() async {
+        pollTask?.cancel()
+        pollTask = nil
+        if phase == .recording {
+            _ = await recorder.stop()
+        }
+    }
+}

@@ -36,14 +36,27 @@ struct AutoKeysRowBadge: View {
         guard let seq = account.autoKeys, !seq.isEmpty else {
             return "AUTO-KEYS"
         }
-        return "\(seq.steps.count) KEY\(seq.steps.count == 1 ? "" : "S") · \(formatSeconds(seq.totalDuration))"
+        switch seq.variant {
+        case .legacy:
+            return "\(seq.steps.count) KEY\(seq.steps.count == 1 ? "" : "S") · \(formatSeconds(seq.totalDuration))"
+        case .stream:
+            let count = seq.actions.count
+            return "\(count) ACT\(count == 1 ? "" : "S") · \(formatSeconds(seq.totalDuration))"
+        }
     }
 
     private var helpText: String {
         guard let seq = account.autoKeys, !seq.isEmpty else {
             return "Auto-keys not configured for this account. Click to record a keystroke sequence the cycler will fire while you AFK."
         }
-        return "Auto-keys: \(seq.steps.count) key\(seq.steps.count == 1 ? "" : "s"), totalling \(formatSeconds(seq.totalDuration)). Click to edit or clear."
+        switch seq.variant {
+        case .legacy:
+            return "Auto-keys (legacy): \(seq.steps.count) key\(seq.steps.count == 1 ? "" : "s"), totalling \(formatSeconds(seq.totalDuration)). Click to re-record with mouse + unlimited actions."
+        case .stream:
+            let count = seq.actions.count
+            let sharedSuffix = seq.isShared ? " · shared" : ""
+            return "Auto-keys: \(count) action\(count == 1 ? "" : "s"), \(formatSeconds(seq.totalDuration))\(sharedSuffix). Click to re-record or share."
+        }
     }
 
     private func formatSeconds(_ seconds: TimeInterval) -> String {

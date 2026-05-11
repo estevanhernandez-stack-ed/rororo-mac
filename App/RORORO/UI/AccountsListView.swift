@@ -132,7 +132,11 @@ struct AccountsListView: View {
             Text("Drop this account into a new group. Other accounts can join the same group from their menu.")
         }
         .sheet(item: $pendingAutoKeysRecorderForAccount) { account in
-            AutoKeysRecorderSheet(
+            // D-3.4 — V2 recorder replaces the legacy step-by-step sheet
+            // as the chip's entry point. Legacy on-disk sequences still
+            // run via the cycler's legacy variant path; the user must
+            // re-record to upgrade to the action-stream format.
+            AutoKeysRecorderV2Sheet(
                 isPresented: Binding(
                     get: { pendingAutoKeysRecorderForAccount != nil },
                     set: { newValue in
