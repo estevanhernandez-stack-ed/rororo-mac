@@ -1,8 +1,18 @@
 // AutoKeysRowBadge.swift
-// Per-account row entry into the recorder sheet (Slope C wave 3b).
-// Tiny — a chevron-style chip that surfaces "auto-keys: not configured"
-// vs "auto-keys: 2 keys, 6.0s" and opens `AutoKeysRecorderSheet` on tap.
-// Renders inside `AccountsListView`'s row, alongside the FPS chip.
+// Per-account row entry into the recorder sheet. Tap → V2 recorder
+// (post-D-3.4). Right-click context menu → sharing controls
+// (D-3.5 ADR 0007 Decision 7): pick another account's shared
+// recording, clear the sharing reference, or clear the local
+// recording entirely.
+//
+// The label reflects what the cycler will actually play for this
+// account at runtime, surfaced through the same `AutoKeysSharingResolver`
+// the cycler reads from. Five user-visible states:
+//   - Not configured                 → "AUTO-KEYS"
+//   - Own legacy recording           → "N KEYS · Ts"
+//   - Own stream recording           → "N ACTS · Ts" (+ "shared" in help)
+//   - Using shared (source healthy)  → "USING X" with shared icon
+//   - Using shared (broken)          → "USING X · MISSING" warn-colored
 
 import SwiftUI
 
@@ -11,17 +21,17 @@ struct AutoKeysRowBadge: View {
     let account: Account
     let onTap: () -> Void
 
+    private let store = AccountStore.shared
+
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 6) {
-                Image(systemName: account.autoKeys?.isEmpty == false
-                      ? "keyboard.fill"
-                      : "keyboard")
+                Image(systemName: icon)
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color.white.opacity(0.9))
+                    .foregroundStyle(iconColor)
                 Text(label)
                     .font(Theme.Font.monoMicro)
-                    .foregroundStyle(Color.white.opacity(0.85))
+                    .foregroundStyle(textColor)
                     .tracking(0.4)
             }
             .padding(.horizontal, 8)
@@ -30,32 +40,135 @@ struct AutoKeysRowBadge: View {
         }
         .buttonStyle(.plain)
         .help(helpText)
+        .contextMenu { contextMenuContent }
+    }
+
+    // MARK: - Context menu
+
+    @ViewBuilder
+    private var contextMenuContent: some View {
+        Button("Record / re-record…", action: onTap)
+
+        Divider()
+
+        let shareables = shareableSources
+        if shareables.isEmpty {
+            Text("No other account has a shared recording yet")
+        } else {
+            Menu("Use shared recording") {
+                ForEach(shareables, id: \.id) { owner in
+                    Button(account.autoKeysSourceAccountId == owner.id
+                           ? "✓ \(owner.displayName)"
+                           : owner.displayName) {
+                        store.setAutoKeysSourceAccountId(
+                            userId: account.userId,
+                            sourceUserId: owner.id
+                        )
+                    }
+                }
+            }
+        }
+
+        if account.autoKeysSourceAccountId != nil {
+            Button("Use my own recording") {
+                store.setAutoKeysSourceAccountId(
+                    userId: account.userId,
+                    sourceUserId: nil
+                )
+            }
+        }
+
+        if account.autoKeys?.isEmpty == false {
+            Divider()
+            Button("Clear my recording", role: .destructive) {
+                store.setAutoKeys(userId: account.userId, sequence: nil)
+            }
+        }
+    }
+
+    /// Every other account whose own recording is marked `isShared`.
+    /// Legacy (non-stream) recordings can't be shared per ADR 0007 — the
+    /// `isShared` flag only lives on stream variants. Self-excluded so
+    /// an account doesn't appear in its own picker.
+    private var shareableSources: [Account] {
+        store.accounts.filter { other in
+            guard other.userId != account.userId else { return false }
+            guard let seq = other.autoKeys, !seq.isEmpty else { return false }
+            return seq.isShared
+        }
+    }
+
+    // MARK: - Label
+
+    /// Resolves the effective sequence the cycler will play (own vs
+    /// shared vs orphan/broken). Drives the label + colors.
+    private var resolution: AutoKeysSharingResolver.Resolution {
+        AutoKeysSharingResolver.resolve(account: account, all: store.accounts)
     }
 
     private var label: String {
-        guard let seq = account.autoKeys, !seq.isEmpty else {
+        switch resolution {
+        case .ownEmpty:
             return "AUTO-KEYS"
-        }
-        switch seq.variant {
-        case .legacy:
-            return "\(seq.steps.count) KEY\(seq.steps.count == 1 ? "" : "S") · \(formatSeconds(seq.totalDuration))"
-        case .stream:
-            let count = seq.actions.count
-            return "\(count) ACT\(count == 1 ? "" : "S") · \(formatSeconds(seq.totalDuration))"
+        case let .ownRecording(seq):
+            switch seq.variant {
+            case .legacy:
+                return "\(seq.steps.count) KEY\(seq.steps.count == 1 ? "" : "S") · \(formatSeconds(seq.totalDuration))"
+            case .stream:
+                let count = seq.actions.count
+                return "\(count) ACT\(count == 1 ? "" : "S") · \(formatSeconds(seq.totalDuration))"
+            }
+        case let .sharedFrom(sourceId, _):
+            let name = store.accounts.first(where: { $0.id == sourceId })?.displayName ?? "?"
+            return "USING \(name.uppercased())"
+        case .orphaned, .sourceNotShared:
+            return "SHARED · MISSING"
         }
     }
 
     private var helpText: String {
-        guard let seq = account.autoKeys, !seq.isEmpty else {
-            return "Auto-keys not configured for this account. Click to record a keystroke sequence the cycler will fire while you AFK."
+        switch resolution {
+        case .ownEmpty:
+            return "Auto-keys not configured. Click to record a sequence, or right-click to use another account's shared recording."
+        case let .ownRecording(seq):
+            switch seq.variant {
+            case .legacy:
+                return "Legacy \(seq.steps.count)-key recording, \(formatSeconds(seq.totalDuration)). Click to re-record with mouse + unlimited actions."
+            case .stream:
+                let sharedSuffix = seq.isShared ? " · shared with other accounts" : ""
+                return "Recorded session: \(seq.actions.count) actions, \(formatSeconds(seq.totalDuration))\(sharedSuffix). Right-click to share or pick another account's recording."
+            }
+        case let .sharedFrom(sourceId, seq):
+            let name = store.accounts.first(where: { $0.id == sourceId })?.displayName ?? "?"
+            return "Using \(name)'s shared recording (\(seq.actions.count) actions, \(formatSeconds(seq.totalDuration))). Right-click to switch or revert to own."
+        case let .orphaned(missingId):
+            return "Referenced account \(missingId) is gone or has no recording. Right-click to clear or pick a different source."
+        case let .sourceNotShared(sourceId):
+            let name = store.accounts.first(where: { $0.id == sourceId })?.displayName ?? sourceId
+            return "\(name) un-shared their recording. Right-click to clear or pick a different source."
         }
-        switch seq.variant {
-        case .legacy:
-            return "Auto-keys (legacy): \(seq.steps.count) key\(seq.steps.count == 1 ? "" : "s"), totalling \(formatSeconds(seq.totalDuration)). Click to re-record with mouse + unlimited actions."
-        case .stream:
-            let count = seq.actions.count
-            let sharedSuffix = seq.isShared ? " · shared" : ""
-            return "Auto-keys: \(count) action\(count == 1 ? "" : "s"), \(formatSeconds(seq.totalDuration))\(sharedSuffix). Click to re-record or share."
+    }
+
+    private var icon: String {
+        switch resolution {
+        case .ownEmpty:                    return "keyboard"
+        case .ownRecording:                return "keyboard.fill"
+        case .sharedFrom:                  return "person.2.fill"
+        case .orphaned, .sourceNotShared:  return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var iconColor: Color {
+        switch resolution {
+        case .orphaned, .sourceNotShared:  return Theme.Color.stateWarn
+        default:                           return Color.white.opacity(0.9)
+        }
+    }
+
+    private var textColor: Color {
+        switch resolution {
+        case .orphaned, .sourceNotShared:  return Theme.Color.stateWarn
+        default:                           return Color.white.opacity(0.85)
         }
     }
 

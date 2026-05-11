@@ -138,6 +138,18 @@ public final class AccountStore {
         save()
     }
 
+    /// Set or clear the consumer-side sharing reference (ADR 0007
+    /// Decision 7, D-3.5). When non-nil, the cycler plays the source
+    /// account's recording instead of this account's own. nil reverts
+    /// to "play my own recording" (or skip if empty). The resolver
+    /// (`AutoKeysSharingResolver`) handles orphaned / non-shared
+    /// source cases at cycle-start time; setting here doesn't validate.
+    public func setAutoKeysSourceAccountId(userId: String, sourceUserId: String?) {
+        guard let idx = accounts.firstIndex(where: { $0.userId == userId }) else { return }
+        accounts[idx].autoKeysSourceAccountId = sourceUserId
+        save()
+    }
+
     /// All non-nil group names currently in use, sorted alphabetically.
     /// Drives the per-account chevron menu's "Group" submenu so users
     /// can drop an account into an existing group without retyping

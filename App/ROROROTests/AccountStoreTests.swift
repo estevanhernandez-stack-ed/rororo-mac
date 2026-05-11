@@ -454,6 +454,61 @@ final class AccountStoreTests: XCTestCase {
         XCTAssertTrue(store.accounts.isEmpty)
     }
 
+    // MARK: - D-3.5 — setAutoKeysSourceAccountId (sharing reference)
+
+    func testSetAutoKeysSourceAccountId_PersistsValueAndSurvivesReload() throws {
+        let first = makeStore()
+        try first.add(account: Account(userId: "1", username: "alice", displayName: "Alice"), cookie: "a")
+        try first.add(account: Account(userId: "2", username: "bob", displayName: "Bob"), cookie: "b")
+
+        first.setAutoKeysSourceAccountId(userId: "2", sourceUserId: "1")
+
+        XCTAssertEqual(first.accounts.first(where: { $0.userId == "2" })?.autoKeysSourceAccountId, "1")
+
+        let reloaded = AccountStore(storeURL: tempStoreURL)
+        XCTAssertEqual(reloaded.accounts.first(where: { $0.userId == "2" })?.autoKeysSourceAccountId, "1")
+    }
+
+    func testSetAutoKeysSourceAccountId_NilClearsReference() throws {
+        let store = makeStore()
+        try store.add(
+            account: Account(
+                userId: "2",
+                username: "bob",
+                displayName: "Bob",
+                autoKeysSourceAccountId: "1"
+            ),
+            cookie: "b"
+        )
+        XCTAssertEqual(store.accounts.first?.autoKeysSourceAccountId, "1")
+
+        store.setAutoKeysSourceAccountId(userId: "2", sourceUserId: nil)
+        XCTAssertNil(store.accounts.first?.autoKeysSourceAccountId)
+    }
+
+    func testSetAutoKeysSourceAccountId_OnUnknownUser_DoesNotCrash() {
+        let store = makeStore()
+        store.setAutoKeysSourceAccountId(userId: "nope", sourceUserId: "1")
+        XCTAssertTrue(store.accounts.isEmpty)
+    }
+
+    func testAccount_DecodesLegacyJsonWithoutAutoKeysSourceAccountId() throws {
+        // Pre-D-3.1 accounts.json files don't carry the sharing field.
+        // The optional Codable field should decode as nil — never throw.
+        let legacyJson = """
+        [
+          { "userId": "1", "username": "alice", "displayName": "Alice" }
+        ]
+        """.data(using: .utf8)!
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode([Account].self, from: legacyJson)
+
+        XCTAssertEqual(decoded.count, 1)
+        XCTAssertNil(decoded.first?.autoKeysSourceAccountId)
+    }
+
     func testAccount_DecodesFromLegacyJsonWithoutAutoKeysField() throws {
         // accounts.json files written before Slope C don't carry autoKeys.
         // The optional Codable field should decode as nil — never throw.
