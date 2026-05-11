@@ -108,24 +108,49 @@ Out-of-scope reports still get an acknowledgement and a polite explanation withi
 
 `SECURITY.md` says "request a GPG public key in your initial message" — that promise needs to be cashable. **Action item:** generate a maintainer GPG key, publish the fingerprint, and either upload to keys.openpgp.org or attach to GitHub account.
 
-One-time setup:
+One-time setup. **macOS quirk first:** if you don't have `pinentry-mac` installed, `gpg --full-generate-key` will fail with `Screen or window too small`. Fix:
 
 ```bash
-# Generate a key (interactive — pick "EdDSA + EdDSA", 0 = key does not expire,
-# Real Name: Estevan Hernandez, Email: estevan@626labs.dev).
+# macOS prerequisite — native GUI passphrase prompt
+brew install pinentry-mac
+mkdir -p ~/.gnupg && chmod 700 ~/.gnupg
+echo "pinentry-program /usr/local/bin/pinentry-mac" >> ~/.gnupg/gpg-agent.conf
+gpgconf --kill gpg-agent
+```
+
+Then generate + publish:
+
+```bash
+# 1. Generate (interactive — pick option 9 ECC+ECC, curve 1 Curve25519,
+#    expiry 0, name + email matching SECURITY.md). Passphrase prompt pops
+#    in a native macOS dialog from pinentry-mac.
 gpg --full-generate-key
 
-# Get the fingerprint to publish:
+# 2. Read the fingerprint
 gpg --list-keys --fingerprint estevan@626labs.dev
 
-# Export the public key:
+# 3. Export the PUBLIC key (safe to share; ~/Documents is fine even if
+#    iCloud-synced — public keys are meant to be shared)
 gpg --armor --export estevan@626labs.dev > ~/Documents/626labs-pgp-public.asc
 
-# Upload to keys.openpgp.org (it'll send a verification email):
-curl -F 'keytext=@/Users/estevanhernandez/Documents/626labs-pgp-public.asc' https://keys.openpgp.org
+# 4. Upload to keys.openpgp.org — open the returned URL in a browser
+#    and click the verification email keys.openpgp.org sends.
+curl -sS -F "keytext=@$HOME/Documents/626labs-pgp-public.asc" https://keys.openpgp.org/vks/v1/upload
 
-# Add to GitHub account (optional — signs commits + the public key is discoverable):
+# 5. Add to GitHub (discoverable via github.com/<user>.gpg)
 gh gpg-key add ~/Documents/626labs-pgp-public.asc
+
+# 6. Export the PRIVATE key to /tmp for 1Password backup.
+#    DO NOT WRITE THIS TO ~/Documents OR ~/Desktop — those are
+#    iCloud-Drive-synced by default and would propagate the private
+#    key to every Apple device on the iCloud account. Use /tmp.
+gpg --export-secret-keys --armor estevan@626labs.dev > /tmp/626labs-pgp-private.asc
+
+# 7. Open 1Password → New Secure Note → attach /tmp/626labs-pgp-private.asc
+#    + the passphrase as a separate field. Save.
+
+# 8. Wipe the on-disk private-key export
+rm /tmp/626labs-pgp-private.asc
 ```
 
 Then update `SECURITY.md` to publish the fingerprint inline so researchers can verify before sending sensitive details.
