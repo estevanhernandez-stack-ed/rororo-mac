@@ -52,172 +52,170 @@ struct AutoKeysRowBadge: View {
 
         Divider()
 
-        let shareables = shareableSources
+        let shareables = shareableMacros
         if shareables.isEmpty {
-            Text("No other account has a shared recording yet")
+            Text("No other shared macros yet")
         } else {
-            Menu("Use shared recording") {
-                ForEach(shareables, id: \.id) { owner in
-                    let label = pickerLabel(for: owner)
-                    Button(account.autoKeysSourceAccountId == owner.id
+            Menu("Use macro") {
+                ForEach(shareables, id: \.id) { macro in
+                    let label = pickerLabel(for: macro)
+                    Button(account.activeMacroId == macro.id
                            ? "✓ \(label)"
                            : label) {
-                        store.setAutoKeysSourceAccountId(
+                        store.setActiveMacroId(
                             userId: account.userId,
-                            sourceUserId: owner.id
+                            macroId: macro.id
                         )
                     }
                 }
             }
         }
 
-        if account.autoKeysSourceAccountId != nil {
-            Button("Use my own recording") {
-                store.setAutoKeysSourceAccountId(
-                    userId: account.userId,
-                    sourceUserId: nil
-                )
+        // "Use my own" — only meaningful when this account has at least
+        // one macro in the library (D-4.3 — own macros are first-class).
+        let ownMacros = MacroStore.shared.macros(ownedBy: account.userId)
+        if !ownMacros.isEmpty {
+            Menu("Use my recording") {
+                ForEach(ownMacros, id: \.id) { macro in
+                    Button(account.activeMacroId == macro.id
+                           ? "✓ \(macro.name)"
+                           : macro.name) {
+                        store.setActiveMacroId(
+                            userId: account.userId,
+                            macroId: macro.id
+                        )
+                    }
+                }
             }
         }
 
-        if account.autoKeys?.isEmpty == false {
-            Divider()
-            Button("Clear my recording", role: .destructive) {
-                store.setAutoKeys(userId: account.userId, sequence: nil)
+        if account.activeMacroId != nil {
+            Button("Clear active macro") {
+                store.setActiveMacroId(userId: account.userId, macroId: nil)
             }
         }
     }
 
-    /// Every other account whose own recording is marked `isShared`.
-    /// Legacy (non-stream) recordings can't be shared per ADR 0007 — the
-    /// `isShared` flag only lives on stream variants. Self-excluded so
-    /// an account doesn't appear in its own picker.
-    private var shareableSources: [Account] {
-        store.accounts.filter { other in
-            guard other.userId != account.userId else { return false }
-            guard let seq = other.autoKeys, !seq.isEmpty else { return false }
-            return seq.isShared
-        }
+    /// Shareable macros from the library, excluding any owned by this
+    /// account — drives the right-click picker submenu.
+    private var shareableMacros: [Macro] {
+        MacroStore.shared.sharedMacros(excludingOwner: account.userId)
     }
 
-    /// Render a picker label that includes the source's macro name
-    /// when set ("Alice · Combat rotation"); falls back to bare display
-    /// name when the recording is unnamed.
-    private func pickerLabel(for owner: Account) -> String {
-        if let macroName = owner.autoKeys?.name {
-            return "\(owner.displayName) · \(macroName)"
+    /// Picker label including owner attribution when the macro has one.
+    private func pickerLabel(for macro: Macro) -> String {
+        if let ownerId = macro.ownerUserId,
+           let owner = store.accounts.first(where: { $0.id == ownerId }) {
+            return "\(owner.displayName) · \(macro.name)"
         }
-        return owner.displayName
+        return macro.name
     }
 
     // MARK: - Label
 
-    /// Resolves the effective sequence the cycler will play (own vs
-    /// shared vs global-default vs orphan/broken). Drives the label
-    /// + colors.
+    /// Resolves what the cycler will play for this account. Drives the
+    /// label + colors. D-4.3 — library-aware.
     private var resolution: AutoKeysSharingResolver.Resolution {
         AutoKeysSharingResolver.resolve(
             account: account,
-            all: store.accounts,
+            macros: MacroStore.shared.macros,
             globalDefault: settings.defaultMacroBehavior
         )
     }
 
     private var label: String {
         switch resolution {
-        case .ownEmpty:
+        case .none:
             return "AUTO-KEYS"
-        case let .ownRecording(seq):
-            switch seq.variant {
-            case .legacy:
-                // LEGACY prefix flags pre-ADR-0007 sequences for the eye
-                // scanner — re-recording opens the V2 sheet which writes
-                // a stream variant on save.
-                return "LEGACY · \(seq.steps.count) KEY\(seq.steps.count == 1 ? "" : "S")"
-            case .stream:
-                if let name = seq.name {
-                    return name.uppercased()
-                }
-                let count = seq.actions.count
-                return "\(count) ACT\(count == 1 ? "" : "S") · \(formatSeconds(seq.totalDuration))"
+        case let .playing(macro):
+            if let ownerId = macro.ownerUserId, ownerId != account.userId {
+                let owner = store.accounts.first(where: { $0.id == ownerId })?.displayName ?? "?"
+                return "\(owner.uppercased()) · \(macro.name.uppercased())"
             }
-        case let .sharedFrom(sourceId, seq):
-            let ownerName = store.accounts.first(where: { $0.id == sourceId })?.displayName ?? "?"
-            if let macroName = seq.name {
-                return "\(ownerName.uppercased()) · \(macroName.uppercased())"
+            // Own macro — show macro name only.
+            if macro.isLegacy {
+                return "LEGACY · \(macro.name.uppercased())"
             }
-            return "USING \(ownerName.uppercased())"
-        case let .usingGlobalDefault(reason, seq):
+            return macro.name.uppercased()
+        case let .usingGlobalDefault(reason, _):
             switch reason {
             case .stayAlive:
                 return "DEFAULT · STAY ALIVE"
-            case let .sharedFrom(sourceId):
-                let ownerName = store.accounts.first(where: { $0.id == sourceId })?.displayName ?? "?"
-                if let macroName = seq.name {
-                    return "DEFAULT · \(ownerName.uppercased())/\(macroName.uppercased())"
+            case let .usingMacro(macro):
+                if let ownerId = macro.ownerUserId,
+                   let owner = store.accounts.first(where: { $0.id == ownerId }) {
+                    return "DEFAULT · \(owner.displayName.uppercased())/\(macro.name.uppercased())"
                 }
-                return "DEFAULT · \(ownerName.uppercased())"
+                return "DEFAULT · \(macro.name.uppercased())"
             }
-        case .orphaned, .sourceNotShared:
-            return "SHARED · MISSING"
+        case .orphaned:
+            return "MACRO · MISSING"
         }
     }
 
     private var helpText: String {
         switch resolution {
-        case .ownEmpty:
-            return "Auto-keys not configured. Click to record a sequence, or right-click to use another account's shared recording."
-        case let .ownRecording(seq):
-            switch seq.variant {
-            case .legacy:
-                return "Legacy \(seq.steps.count)-key recording, \(formatSeconds(seq.totalDuration)). Click to re-record with mouse + unlimited actions."
-            case .stream:
-                let sharedSuffix = seq.isShared ? " · shared with other accounts" : ""
-                return "Recorded session: \(seq.actions.count) actions, \(formatSeconds(seq.totalDuration))\(sharedSuffix). Right-click to share or pick another account's recording."
+        case .none:
+            return "No macro selected. Click to record one, or right-click to pick from the library."
+        case let .playing(macro):
+            let ownerName: String? = {
+                guard let id = macro.ownerUserId else { return nil }
+                return store.accounts.first(where: { $0.id == id })?.displayName
+            }()
+            let actionCount: Int
+            switch macro.variant {
+            case let .legacy(steps): actionCount = steps.count
+            case let .stream(actions): actionCount = actions.count
             }
-        case let .sharedFrom(sourceId, seq):
-            let name = store.accounts.first(where: { $0.id == sourceId })?.displayName ?? "?"
-            return "Using \(name)'s shared recording (\(seq.actions.count) actions, \(formatSeconds(seq.totalDuration))). Right-click to switch or revert to own."
-        case let .usingGlobalDefault(reason, seq):
+            let owner = ownerName ?? "?"
+            let unit = macro.isLegacy ? "step" : "action"
+            let plural = actionCount == 1 ? "" : "s"
+            if macro.ownerUserId == account.userId {
+                let sharedSuffix = macro.isShared ? " · shared with other accounts" : ""
+                return "Macro: \(macro.name) — \(actionCount) \(unit)\(plural)\(sharedSuffix). Right-click to share / pick another / clear."
+            }
+            return "Using \(owner)'s macro: \(macro.name) (\(actionCount) \(unit)\(plural)). Right-click to switch."
+        case let .usingGlobalDefault(reason, _):
             switch reason {
             case .stayAlive:
-                return "Falling back to the global default — synthesized spacebar keeps this account alive. Record a sequence for this account to override, or change the default in the cycler toolbar."
-            case let .sharedFrom(sourceId):
-                let name = store.accounts.first(where: { $0.id == sourceId })?.displayName ?? "?"
-                let count = seq.isLegacy ? seq.steps.count : seq.actions.count
-                return "Falling back to the global default — playing \(name)'s shared recording (\(count) steps, \(formatSeconds(seq.totalDuration))). Record your own to override."
+                return "Falling back to the global default — synthesized spacebar keeps this account alive. Record a macro for this account to override, or change the default in the cycler toolbar."
+            case let .usingMacro(macro):
+                let ownerName = macro.ownerUserId.flatMap { id in
+                    store.accounts.first(where: { $0.id == id })?.displayName
+                } ?? "?"
+                return "Falling back to the global default — playing \(macro.name) (from \(ownerName)). Right-click to pick your own or change the default."
             }
-        case let .orphaned(missingId):
-            return "Referenced account \(missingId) is gone or has no recording. Right-click to clear or pick a different source."
-        case let .sourceNotShared(sourceId):
-            let name = store.accounts.first(where: { $0.id == sourceId })?.displayName ?? sourceId
-            return "\(name) un-shared their recording. Right-click to clear or pick a different source."
+        case let .orphaned(macroId):
+            return "Active macro \(macroId) is missing from the library. Right-click to clear or pick a different one."
         }
     }
 
     private var icon: String {
         switch resolution {
-        case .ownEmpty:                    return "keyboard"
-        case .ownRecording:                return "keyboard.fill"
-        case .sharedFrom:                  return "person.2.fill"
-        case .usingGlobalDefault:          return "checkmark.shield"
-        case .orphaned, .sourceNotShared:  return "exclamationmark.triangle.fill"
+        case .none:                return "keyboard"
+        case let .playing(macro):
+            if let ownerId = macro.ownerUserId, ownerId != account.userId {
+                return "person.2.fill"
+            }
+            return "keyboard.fill"
+        case .usingGlobalDefault:  return "checkmark.shield"
+        case .orphaned:            return "exclamationmark.triangle.fill"
         }
     }
 
     private var iconColor: Color {
         switch resolution {
-        case .orphaned, .sourceNotShared:  return Theme.Color.stateWarn
-        case .usingGlobalDefault:          return Theme.Color.fg2.opacity(0.95)
-        default:                           return Color.white.opacity(0.9)
+        case .orphaned:            return Theme.Color.stateWarn
+        case .usingGlobalDefault:  return Theme.Color.fg2.opacity(0.95)
+        default:                   return Color.white.opacity(0.9)
         }
     }
 
     private var textColor: Color {
         switch resolution {
-        case .orphaned, .sourceNotShared:  return Theme.Color.stateWarn
-        case .usingGlobalDefault:          return Theme.Color.fg2
-        default:                           return Color.white.opacity(0.85)
+        case .orphaned:            return Theme.Color.stateWarn
+        case .usingGlobalDefault:  return Theme.Color.fg2
+        default:                   return Color.white.opacity(0.85)
         }
     }
 

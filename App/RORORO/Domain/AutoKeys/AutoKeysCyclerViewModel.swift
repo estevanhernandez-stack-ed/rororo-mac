@@ -344,19 +344,17 @@ public final class AutoKeysCyclerViewModel {
             }
         }
 
-        // ADR 0007 Decision 7 — resolve sharing references. An account
-        // with `autoKeysSourceAccountId` set substitutes the source's
-        // sequence; D-3.8 adds the global-default fallback for accounts
-        // with neither own recording nor an explicit reference;
-        // orphaned + non-shared references skip the consumer (the
-        // resolver returns nil so the compactMap drops it).
-        let allAccounts = store.accounts
+        // D-4.3 — resolve via the macro library. The account's
+        // `activeMacroId` is the new explicit reference; orphaned refs
+        // (target macro deleted) + missing activeMacroId fall through
+        // to the global default fallback (D-3.8).
         let globalDefault = settings.defaultMacroBehavior
-        return allAccounts.compactMap { account in
+        let macros = MacroStore.shared.macros
+        return store.accounts.compactMap { account in
             guard isEligible(account) else { return nil }
             guard let sequence = AutoKeysSharingResolver.playableSequence(
                 account: account,
-                all: allAccounts,
+                macros: macros,
                 globalDefault: globalDefault
             ) else { return nil }
             guard let pid = tracker.pid(for: account.userId) else { return nil }

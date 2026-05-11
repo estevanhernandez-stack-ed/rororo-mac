@@ -1,6 +1,9 @@
 // AutoKeysSharingResolverTests.swift
-// Wave D-3.2 — pure helper, no fakes. Covers all 5 Resolution cases
-// plus the playableSequence convenience.
+// Wave D-4.3 — covers the library-aware resolver. The D-3.5 / D-3.8
+// pre-library resolver tests are retired (the cases they exercised
+// — ownEmpty / ownRecording / sharedFrom / orphaned / sourceNotShared
+// — no longer exist; they were per-account fields the migrator
+// already promoted to library macros).
 
 import XCTest
 @testable import RORORO
@@ -9,155 +12,67 @@ final class AutoKeysSharingResolverTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func legacy() -> AutoKeysSequence {
-        AutoKeysSequence(steps: [AutoKeysStep.spacebar(after: 1)])!
-    }
-
-    private func stream(shared: Bool = false) -> AutoKeysSequence {
-        AutoKeysSequence(
-            actions: [.keyDown(keyCode: 49, modifiers: 0, dt: 0)],
-            isShared: shared
-        )!
-    }
-
     private func account(
         id: String,
-        autoKeys: AutoKeysSequence? = nil,
-        ref: String? = nil
+        activeMacroId: String? = nil
     ) -> Account {
         Account(
             userId: id,
             username: id,
             displayName: id,
-            autoKeys: autoKeys,
-            autoKeysSourceAccountId: ref
+            activeMacroId: activeMacroId
         )
     }
 
-    // MARK: - Cases
-
-    func testResolve_NoReference_NoOwn_YieldsOwnEmpty() {
-        let a = account(id: "1")
-        XCTAssertEqual(AutoKeysSharingResolver.resolve(account: a, all: [a]), .ownEmpty)
+    private func streamMacro(
+        id: String,
+        ownerUserId: String? = nil,
+        isShared: Bool = true,
+        name: String = "Test"
+    ) -> Macro {
+        Macro(
+            id: id,
+            name: name,
+            ownerUserId: ownerUserId,
+            variant: .stream([.keyDown(keyCode: 49, modifiers: 0, dt: 0)]),
+            isShared: isShared
+        )
     }
 
-    func testResolve_NoReference_HasOwnLegacy_YieldsOwnRecording() {
-        let seq = legacy()
-        let a = account(id: "1", autoKeys: seq)
+    // MARK: - activeMacroId path
+
+    func testResolve_ActiveMacroFound_ReturnsPlaying() {
+        let macro = streamMacro(id: "abc")
+        let a = account(id: "alice", activeMacroId: "abc")
         XCTAssertEqual(
-            AutoKeysSharingResolver.resolve(account: a, all: [a]),
-            .ownRecording(seq)
+            AutoKeysSharingResolver.resolve(account: a, macros: [macro]),
+            .playing(macro)
         )
     }
 
-    func testResolve_NoReference_HasOwnStream_YieldsOwnRecording() {
-        let seq = stream()
-        let a = account(id: "1", autoKeys: seq)
+    func testResolve_ActiveMacroMissing_ReturnsOrphaned() {
+        let a = account(id: "alice", activeMacroId: "ghost")
         XCTAssertEqual(
-            AutoKeysSharingResolver.resolve(account: a, all: [a]),
-            .ownRecording(seq)
+            AutoKeysSharingResolver.resolve(account: a, macros: []),
+            .orphaned(macroId: "ghost")
         )
     }
 
-    func testResolve_ReferenceToSharedSource_YieldsSharedFrom() {
-        let sharedSeq = stream(shared: true)
-        let source = account(id: "1", autoKeys: sharedSeq)
-        let consumer = account(id: "2", ref: "1")
+    func testResolve_NoActiveMacro_NoDefault_ReturnsNone() {
+        let a = account(id: "alice")
         XCTAssertEqual(
-            AutoKeysSharingResolver.resolve(account: consumer, all: [source, consumer]),
-            .sharedFrom(sourceAccountId: "1", sequence: sharedSeq)
+            AutoKeysSharingResolver.resolve(account: a, macros: []),
+            .none
         )
     }
 
-    func testResolve_ReferenceToMissingSource_YieldsOrphaned() {
-        let consumer = account(id: "2", ref: "1")
-        XCTAssertEqual(
-            AutoKeysSharingResolver.resolve(account: consumer, all: [consumer]),
-            .orphaned(missingSourceAccountId: "1")
-        )
-    }
+    // MARK: - Global default fallback
 
-    func testResolve_ReferenceToSourceWithNilAutoKeys_YieldsOrphaned() {
-        let source = account(id: "1", autoKeys: nil)
-        let consumer = account(id: "2", ref: "1")
-        XCTAssertEqual(
-            AutoKeysSharingResolver.resolve(account: consumer, all: [source, consumer]),
-            .orphaned(missingSourceAccountId: "1")
-        )
-    }
-
-    func testResolve_ReferenceToSourceWithEmptyAutoKeys_YieldsOrphaned() {
-        // An empty stream-variant recording on the source is treated the
-        // same as nil — nothing to play.
-        let source = account(id: "1", autoKeys: AutoKeysSequence(actions: [])!)
-        let consumer = account(id: "2", ref: "1")
-        XCTAssertEqual(
-            AutoKeysSharingResolver.resolve(account: consumer, all: [source, consumer]),
-            .orphaned(missingSourceAccountId: "1")
-        )
-    }
-
-    func testResolve_ReferenceToNonSharedSource_YieldsSourceNotShared() {
-        let notShared = stream(shared: false)
-        let source = account(id: "1", autoKeys: notShared)
-        let consumer = account(id: "2", ref: "1")
-        XCTAssertEqual(
-            AutoKeysSharingResolver.resolve(account: consumer, all: [source, consumer]),
-            .sourceNotShared(sourceAccountId: "1")
-        )
-    }
-
-    // MARK: - playableSequence convenience
-
-    func testPlayableSequence_OwnRecording_ReturnsOwn() {
-        let seq = legacy()
-        let a = account(id: "1", autoKeys: seq)
-        XCTAssertEqual(
-            AutoKeysSharingResolver.playableSequence(account: a, all: [a]),
-            seq
-        )
-    }
-
-    func testPlayableSequence_SharedSource_ReturnsSource() {
-        let sharedSeq = stream(shared: true)
-        let source = account(id: "1", autoKeys: sharedSeq)
-        let consumer = account(id: "2", ref: "1")
-        XCTAssertEqual(
-            AutoKeysSharingResolver.playableSequence(account: consumer, all: [source, consumer]),
-            sharedSeq
-        )
-    }
-
-    func testPlayableSequence_OrphanedReference_ReturnsNil() {
-        let consumer = account(id: "2", ref: "1")
-        XCTAssertNil(
-            AutoKeysSharingResolver.playableSequence(account: consumer, all: [consumer])
-        )
-    }
-
-    func testPlayableSequence_NonSharedSource_ReturnsNil() {
-        let source = account(id: "1", autoKeys: stream(shared: false))
-        let consumer = account(id: "2", ref: "1")
-        XCTAssertNil(
-            AutoKeysSharingResolver.playableSequence(account: consumer, all: [source, consumer])
-        )
-    }
-
-    // MARK: - D-3.8 — global default fallback
-
-    func testResolve_SkipDefault_LeavesOwnEmptyAccountSkipped() {
-        let a = account(id: "1")
-        XCTAssertEqual(
-            AutoKeysSharingResolver.resolve(account: a, all: [a], globalDefault: .skip),
-            .ownEmpty
-        )
-    }
-
-    func testResolve_StayAliveDefault_SynthesizesSequenceForOwnEmpty() {
-        let a = account(id: "1")
+    func testResolve_StayAliveDefault_SynthesizesSequence() {
+        let a = account(id: "alice")
         let resolution = AutoKeysSharingResolver.resolve(
             account: a,
-            all: [a],
+            macros: [],
             globalDefault: .stayAlive
         )
         guard case let .usingGlobalDefault(reason, seq) = resolution else {
@@ -165,111 +80,141 @@ final class AutoKeysSharingResolverTests: XCTestCase {
             return
         }
         XCTAssertEqual(reason, .stayAlive)
-        // The synthesized sequence is a legacy 1-step spacebar — keyCode
-        // 49, delayAfter 1.0.
         XCTAssertTrue(seq.isLegacy)
-        XCTAssertEqual(seq.steps.count, 1)
         XCTAssertEqual(seq.steps.first?.keyCode, 49)
     }
 
-    func testResolve_StayAliveDefault_DoesNotOverrideOwnRecording() {
-        let own = legacy()
-        let a = account(id: "1", autoKeys: own)
-        XCTAssertEqual(
-            AutoKeysSharingResolver.resolve(account: a, all: [a], globalDefault: .stayAlive),
-            .ownRecording(own)
-        )
-    }
-
-    func testResolve_StayAliveDefault_DoesNotOverrideExplicitReference() {
-        let sharedSeq = stream(shared: true)
-        let source = account(id: "1", autoKeys: sharedSeq)
-        let consumer = account(id: "2", ref: "1")
+    func testResolve_StayAliveDefault_DoesNotOverrideActiveMacro() {
+        let macro = streamMacro(id: "abc")
+        let a = account(id: "alice", activeMacroId: "abc")
         XCTAssertEqual(
             AutoKeysSharingResolver.resolve(
-                account: consumer,
-                all: [source, consumer],
+                account: a,
+                macros: [macro],
                 globalDefault: .stayAlive
             ),
-            .sharedFrom(sourceAccountId: "1", sequence: sharedSeq)
+            .playing(macro)
         )
     }
 
-    func testResolve_UseSharedDefault_ResolvesToSourceWhenHealthy() {
-        let sharedSeq = stream(shared: true)
-        let source = account(id: "1", autoKeys: sharedSeq)
-        let consumer = account(id: "2")
+    // MARK: - .useMacro path (D-4.3)
+
+    func testResolve_UseMacroDefault_ResolvesToTargetMacro() {
+        let macro = streamMacro(id: "lib1", name: "Combat")
+        let a = account(id: "alice")
         let resolution = AutoKeysSharingResolver.resolve(
-            account: consumer,
-            all: [source, consumer],
-            globalDefault: .useShared(sourceUserId: "1")
+            account: a,
+            macros: [macro],
+            globalDefault: .useMacro(macroId: "lib1")
         )
         XCTAssertEqual(
             resolution,
-            .usingGlobalDefault(reason: .sharedFrom(sourceAccountId: "1"), sequence: sharedSeq)
+            .usingGlobalDefault(reason: .usingMacro(macro), sequence: macro.sequence)
         )
     }
 
-    func testResolve_UseSharedDefault_FallsThroughToSkipWhenSourceMissing() {
-        let consumer = account(id: "2")
-        XCTAssertEqual(
-            AutoKeysSharingResolver.resolve(
-                account: consumer,
-                all: [consumer],
-                globalDefault: .useShared(sourceUserId: "missing")
-            ),
-            .ownEmpty
-        )
-    }
-
-    func testResolve_UseSharedDefault_FallsThroughToSkipWhenSourceNotShared() {
-        let unshared = stream(shared: false)
-        let source = account(id: "1", autoKeys: unshared)
-        let consumer = account(id: "2")
-        XCTAssertEqual(
-            AutoKeysSharingResolver.resolve(
-                account: consumer,
-                all: [source, consumer],
-                globalDefault: .useShared(sourceUserId: "1")
-            ),
-            .ownEmpty
-        )
-    }
-
-    func testResolve_UseSharedDefault_SelfReferenceFallsThroughToSkip() {
-        // Defensive — the picker shouldn't allow the user to point the
-        // global default at themselves, but if it did, the resolver
-        // must not loop.
-        let a = account(id: "1")
+    func testResolve_UseMacroDefault_MissingMacro_FallsThroughToNone() {
+        let a = account(id: "alice")
         XCTAssertEqual(
             AutoKeysSharingResolver.resolve(
                 account: a,
-                all: [a],
-                globalDefault: .useShared(sourceUserId: "1")
+                macros: [],
+                globalDefault: .useMacro(macroId: "ghost")
             ),
-            .ownEmpty
+            .none
         )
     }
 
-    func testPlayableSequence_GlobalDefault_StayAliveReturnsNonNil() {
-        let a = account(id: "1")
+    // MARK: - .useShared legacy path (D-3.8 compatibility)
+
+    func testResolve_UseSharedDefault_FindsMacroOwnedBySpecifiedUser() {
+        let macro = streamMacro(id: "lib1", ownerUserId: "bob", isShared: true)
+        let a = account(id: "alice")
+        let resolution = AutoKeysSharingResolver.resolve(
+            account: a,
+            macros: [macro],
+            globalDefault: .useShared(sourceUserId: "bob")
+        )
+        XCTAssertEqual(
+            resolution,
+            .usingGlobalDefault(reason: .usingMacro(macro), sequence: macro.sequence)
+        )
+    }
+
+    func testResolve_UseSharedDefault_NonSharedOwnerMacro_FallsThroughToNone() {
+        let unshared = streamMacro(id: "lib1", ownerUserId: "bob", isShared: false)
+        let a = account(id: "alice")
+        XCTAssertEqual(
+            AutoKeysSharingResolver.resolve(
+                account: a,
+                macros: [unshared],
+                globalDefault: .useShared(sourceUserId: "bob")
+            ),
+            .none
+        )
+    }
+
+    func testResolve_UseSharedDefault_SelfReferenceFallsThroughToNone() {
+        let macro = streamMacro(id: "lib1", ownerUserId: "alice", isShared: true)
+        let a = account(id: "alice")
+        XCTAssertEqual(
+            AutoKeysSharingResolver.resolve(
+                account: a,
+                macros: [macro],
+                globalDefault: .useShared(sourceUserId: "alice")
+            ),
+            .none
+        )
+    }
+
+    // MARK: - playableSequence convenience
+
+    func testPlayableSequence_Playing_ReturnsMacroSequence() {
+        let macro = streamMacro(id: "abc")
+        let a = account(id: "alice", activeMacroId: "abc")
+        XCTAssertEqual(
+            AutoKeysSharingResolver.playableSequence(account: a, macros: [macro]),
+            macro.sequence
+        )
+    }
+
+    func testPlayableSequence_None_ReturnsNil() {
+        let a = account(id: "alice")
+        XCTAssertNil(
+            AutoKeysSharingResolver.playableSequence(account: a, macros: [])
+        )
+    }
+
+    func testPlayableSequence_Orphaned_ReturnsNil() {
+        let a = account(id: "alice", activeMacroId: "ghost")
+        XCTAssertNil(
+            AutoKeysSharingResolver.playableSequence(account: a, macros: [])
+        )
+    }
+
+    func testPlayableSequence_StayAliveDefault_ReturnsNonNil() {
+        let a = account(id: "alice")
         XCTAssertNotNil(
             AutoKeysSharingResolver.playableSequence(
                 account: a,
-                all: [a],
+                macros: [],
                 globalDefault: .stayAlive
             )
         )
     }
 
-    func testPlayableSequence_GlobalDefault_SkipReturnsNil() {
-        let a = account(id: "1")
+    func testPlayableSequence_EmptyMacro_ReturnsNil() {
+        // Defensive: a macro with no actions in the library returns nil
+        // from playableSequence — cycler skips rather than firing 0
+        // events forever.
+        let empty = Macro(
+            id: "empty",
+            name: "Empty",
+            variant: .stream([])
+        )
+        let a = account(id: "alice", activeMacroId: "empty")
         XCTAssertNil(
-            AutoKeysSharingResolver.playableSequence(
-                account: a,
-                all: [a],
-                globalDefault: .skip
-            )
+            AutoKeysSharingResolver.playableSequence(account: a, macros: [empty])
         )
     }
 }

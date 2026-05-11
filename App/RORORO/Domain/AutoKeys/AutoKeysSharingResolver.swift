@@ -1,124 +1,119 @@
 // AutoKeysSharingResolver.swift
-// Domain — pure helper that resolves an account's effective auto-keys
-// sequence through the ADR 0007 Decision 7 sharing reference.
+// Domain — pure helper that resolves which macro the cycler plays for
+// a given account. After D-4.3, the resolver is library-aware:
 //
-// Inputs:
-//   - The consumer account (the one we want to play actions for).
-//   - The full account list (to look up the source by id when the
-//     consumer has set `autoKeysSourceAccountId`).
+//   1. account.activeMacroId  → look up in MacroStore
+//        found:      .playing(macro)
+//        missing:    .orphaned(macroId)
+//   2. LaunchSettingsStore.defaultMacroBehavior fallback (D-3.8)
+//        .skip:      .none
+//        .stayAlive: .usingGlobalDefault(.stayAlive, synthSequence)
+//        .useMacro:  .usingGlobalDefault(.usingMacro(macro), seq)
+//        .useShared: legacy — look up macro owned by that user
+//   3. (none)                  → .none (cycler skips)
 //
-// Output: a `Resolution` describing the chosen sequence — or why no
-// sequence was chosen (orphaned reference, source not shared, etc).
-//
-// Why pure: the cycler itself doesn't know about accounts (its Target
-// type carries only pid + sequence + label). Sharing resolution belongs
-// at the view-model layer where account context lives; this helper
-// keeps the policy in one place so it's testable in isolation and
-// reusable across surfaces (the future recorder UI badge will use the
-// same logic to surface "consuming X's recording" without re-deriving).
+// The resolver is the single source of truth for "what plays where."
+// View-model's `buildTargets` reads `playableSequence(...)`; row badge
+// reads the full `Resolution` to surface ownership in the UI.
 
 import Foundation
 
 public enum AutoKeysSharingResolver {
 
     public enum Resolution: Equatable {
-        /// Account has no sharing reference and plays its own non-empty
-        /// recording. The carried sequence is what the cycler should use.
-        case ownRecording(AutoKeysSequence)
-        /// Account references another account's shared recording. Carries
-        /// the source's id (for UI breadcrumbs) and the chosen sequence.
-        case sharedFrom(sourceAccountId: Account.ID, sequence: AutoKeysSequence)
-        /// Account has no reference, no own recording, and the global
-        /// default kicked in (D-3.8). `reason` distinguishes the
-        /// synthesized stay-alive case from the shared-account case.
+        /// A macro from the library is bound to this account via
+        /// `activeMacroId`. Owner attribution lives on the macro
+        /// itself; the row badge inspects `macro.ownerUserId` to
+        /// distinguish "my own" from "shared from X."
+        case playing(Macro)
+        /// Global default (D-3.8) supplied a sequence — either the
+        /// synthesized stay-alive loop or a macro picked from the
+        /// library via `DefaultMacroBehavior.useMacro` / `.useShared`.
         case usingGlobalDefault(reason: GlobalDefaultReason, sequence: AutoKeysSequence)
-        /// Account has no reference and no own recording — cycler skips it.
-        case ownEmpty
-        /// Account references a source that no longer exists (deleted
-        /// account) or whose `autoKeys` is nil/empty. Cycler skips it.
-        case orphaned(missingSourceAccountId: Account.ID)
-        /// Account references an existing source whose recording is NOT
-        /// marked `isShared`. Cycler skips it and the UI should offer to
-        /// clear the broken reference (D-3.5).
-        case sourceNotShared(sourceAccountId: Account.ID)
+        /// activeMacroId references a macro that's no longer in the
+        /// library (deleted or migration gap). UI should offer to
+        /// clear the reference.
+        case orphaned(macroId: String)
+        /// No activeMacroId, no fallback applies. Cycler skips the
+        /// account.
+        case none
     }
 
     public enum GlobalDefaultReason: Equatable {
-        /// Synthesized spacebar-after-N-seconds sequence (no source
-        /// account — built inline by the resolver).
+        /// Synthesized spacebar-after-1s sequence — no underlying macro.
         case stayAlive
-        /// Sourced from another account's shared recording.
-        case sharedFrom(sourceAccountId: Account.ID)
+        /// A specific macro from the library is the global default.
+        case usingMacro(Macro)
     }
 
     /// Synthesized stay-alive sequence — focus → 1 s → spacebar → next.
-    /// Matches the existing stay-awake-mode shape so both paths produce
+    /// Mirrors the existing stay-awake-mode shape so both paths produce
     /// identical playback behavior.
     private static func stayAliveSequence() -> AutoKeysSequence {
-        // Force-unwrap is safe — 1 step is always under the legacy cap.
         AutoKeysSequence(steps: [.spacebar(after: 1.0)])!
     }
 
     public static func resolve(
         account: Account,
-        all: [Account],
+        macros: [Macro],
         globalDefault: DefaultMacroBehavior = .skip
     ) -> Resolution {
-        // 1. Explicit per-account reference (D-3.5).
-        if let refId = account.autoKeysSourceAccountId {
-            guard let source = all.first(where: { $0.id == refId }) else {
-                return .orphaned(missingSourceAccountId: refId)
+        // 1. Explicit per-account reference (the new D-4 path).
+        if let id = account.activeMacroId {
+            if let macro = macros.first(where: { $0.id == id }) {
+                return .playing(macro)
             }
-            guard let sourceSeq = source.autoKeys, !sourceSeq.isEmpty else {
-                return .orphaned(missingSourceAccountId: refId)
-            }
-            guard sourceSeq.isShared else {
-                return .sourceNotShared(sourceAccountId: refId)
-            }
-            return .sharedFrom(sourceAccountId: refId, sequence: sourceSeq)
+            return .orphaned(macroId: id)
         }
-        // 2. Own non-empty recording.
-        if let own = account.autoKeys, !own.isEmpty {
-            return .ownRecording(own)
-        }
-        // 3. Global default fallback (D-3.8).
+        // 2. Global default fallback (D-3.8 / D-4).
         switch globalDefault {
         case .skip:
-            return .ownEmpty
+            return .none
         case .stayAlive:
-            return .usingGlobalDefault(reason: .stayAlive, sequence: stayAliveSequence())
-        case let .useShared(sourceUserId):
-            // Self-reference would loop — silently fall through to skip.
-            guard sourceUserId != account.userId,
-                  let source = all.first(where: { $0.id == sourceUserId }),
-                  let sourceSeq = source.autoKeys,
-                  !sourceSeq.isEmpty,
-                  sourceSeq.isShared else {
-                return .ownEmpty
+            return .usingGlobalDefault(
+                reason: .stayAlive,
+                sequence: stayAliveSequence()
+            )
+        case let .useMacro(macroId):
+            guard let macro = macros.first(where: { $0.id == macroId }),
+                  !macro.isEmpty else {
+                return .none
             }
             return .usingGlobalDefault(
-                reason: .sharedFrom(sourceAccountId: sourceUserId),
-                sequence: sourceSeq
+                reason: .usingMacro(macro),
+                sequence: macro.sequence
+            )
+        case let .useShared(sourceUserId):
+            // Legacy D-3.8 path — translate to "the (first shared)
+            // macro owned by this user." Migrated installs will have
+            // re-saved as `.useMacro`; this case stays for the one
+            // release the legacy shape is on disk.
+            guard sourceUserId != account.userId,
+                  let macro = macros.first(where: {
+                      $0.ownerUserId == sourceUserId && $0.isShared && !$0.isEmpty
+                  }) else {
+                return .none
+            }
+            return .usingGlobalDefault(
+                reason: .usingMacro(macro),
+                sequence: macro.sequence
             )
         }
     }
 
-    /// Convenience — returns the sequence to play, or nil if the
-    /// account is skipped (any non-playable Resolution case). Used by
-    /// the view-model's target builder.
+    /// Convenience — returns the playable sequence for the cycler,
+    /// or nil when the account is skipped. `buildTargets` uses this.
     public static func playableSequence(
         account: Account,
-        all: [Account],
+        macros: [Macro],
         globalDefault: DefaultMacroBehavior = .skip
     ) -> AutoKeysSequence? {
-        switch resolve(account: account, all: all, globalDefault: globalDefault) {
-        case let .ownRecording(seq):
-            return seq
-        case let .sharedFrom(_, seq):
-            return seq
-        case let .usingGlobalDefault(_, seq):
-            return seq
-        case .ownEmpty, .orphaned, .sourceNotShared:
+        switch resolve(account: account, macros: macros, globalDefault: globalDefault) {
+        case let .playing(macro):
+            return macro.isEmpty ? nil : macro.sequence
+        case let .usingGlobalDefault(_, sequence):
+            return sequence
+        case .orphaned, .none:
             return nil
         }
     }

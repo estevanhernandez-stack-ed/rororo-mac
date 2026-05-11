@@ -30,11 +30,15 @@ public enum DefaultMacroBehavior: Codable, Equatable, Sendable {
     /// Identical shape to the existing stay-awake-mode sequence; this
     /// just plumbs it as a fallback instead of a blanket override.
     case stayAlive
-    /// Point the fallback at a specific account's shared recording.
-    /// The source must have `isShared = true` on its `AutoKeysSequence`
-    /// — broken references silently fall through to `.skip` at resolve
-    /// time (and the toolbar's picker SHOULD warn the user separately).
+    /// **Legacy D-3.8 case** — Point the fallback at a specific
+    /// account's shared recording. Replaced by `.useMacro` in D-4.3.
+    /// The resolver still honors this case for one release; the
+    /// toolbar picker writes `.useMacro` going forward.
     case useShared(sourceUserId: String)
+    /// D-4.3 — Point the fallback at a specific macro in the library.
+    /// Stable across owner changes (the macro id is the stable
+    /// identifier; ownership is just attribution).
+    case useMacro(macroId: String)
 
     // MARK: - Codable (tagged shape for forward stability)
 
@@ -42,11 +46,13 @@ public enum DefaultMacroBehavior: Codable, Equatable, Sendable {
         case skip
         case stayAlive
         case useShared
+        case useMacro
     }
 
     private enum CodingKeys: String, CodingKey {
         case kind
         case sourceUserId
+        case macroId
     }
 
     public init(from decoder: Decoder) throws {
@@ -60,6 +66,9 @@ public enum DefaultMacroBehavior: Codable, Equatable, Sendable {
         case .useShared:
             let userId = try c.decode(String.self, forKey: .sourceUserId)
             self = .useShared(sourceUserId: userId)
+        case .useMacro:
+            let macroId = try c.decode(String.self, forKey: .macroId)
+            self = .useMacro(macroId: macroId)
         }
     }
 
@@ -73,6 +82,9 @@ public enum DefaultMacroBehavior: Codable, Equatable, Sendable {
         case let .useShared(userId):
             try c.encode(Kind.useShared, forKey: .kind)
             try c.encode(userId, forKey: .sourceUserId)
+        case let .useMacro(macroId):
+            try c.encode(Kind.useMacro, forKey: .kind)
+            try c.encode(macroId, forKey: .macroId)
         }
     }
 }
