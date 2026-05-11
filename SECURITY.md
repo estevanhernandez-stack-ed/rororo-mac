@@ -72,4 +72,5 @@ If you're unsure whether something falls under safe harbor, email first and ask.
 - [`docs/generated/threat-model.md`](docs/generated/threat-model.md) — STRIDE-shaped threat model.
 - [`docs/security/severity-rubric.md`](docs/security/severity-rubric.md) — severity buckets + fix windows applied to reports.
 - [`docs/security/disclosure-runbook.md`](docs/security/disclosure-runbook.md) — maintainer-facing operational runbook for the policy on this page.
+- [`docs/security/triage-kit.md`](docs/security/triage-kit.md) — first-hour checklist for when a report lands.
 - [`docs/PRIVACY.md`](docs/PRIVACY.md) — what's stored, what's transmitted.
