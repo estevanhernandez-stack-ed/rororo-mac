@@ -15,6 +15,7 @@ struct CyclerToolbarView: View {
 
     @State private var vm = AutoKeysCyclerViewModel.shared
     @State private var showSafetySetup: Bool = false
+    @State private var showMacroLibrary: Bool = false
     @State private var showAlert: Bool = false
 
     private let settings = LaunchSettingsStore.shared
@@ -36,6 +37,9 @@ struct CyclerToolbarView: View {
         }
         .sheet(isPresented: $showSafetySetup) {
             AutoKeysSafetySetupSheet(isPresented: $showSafetySetup)
+        }
+        .sheet(isPresented: $showMacroLibrary) {
+            MacroLibrarySheet(isPresented: $showMacroLibrary)
         }
         .onAppear {
             vm.refreshEstimate()
@@ -85,6 +89,12 @@ struct CyclerToolbarView: View {
                 showSafetySetup = true
             } label: {
                 Label("Hotkey setup…", systemImage: "keyboard.badge.ellipsis")
+            }
+            // D-4.5 — entry point to the macro library management sheet.
+            Button {
+                showMacroLibrary = true
+            } label: {
+                Label("Macros…", systemImage: "list.bullet.rectangle")
             }
             // Mode toggle — non-destructive. Custom per-account macros
             // stay on disk; stay-awake mode just synthesizes spacebar
