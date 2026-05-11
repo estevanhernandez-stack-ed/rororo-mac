@@ -47,12 +47,13 @@ public struct Account: Codable, Equatable, Identifiable, Sendable {
     /// serial queue (B0). No fixed schema — group name is whatever the
     /// user types ("alts", "friends to play with", "grinding").
     public var groupName: String?
-    /// Auto-keys sequence for the cycler (Slope C). nil ≡ not configured
-    /// — the cycler skips this account on every iteration. A non-nil but
-    /// empty sequence is also legal ("configured, no steps") and likewise
-    /// skipped. The sequence cap (≤ 3 steps) is enforced inside
-    /// `AutoKeysSequence` itself; storage shape on disk is additive, so
-    /// pre-Slope-C `accounts.json` files decode with `autoKeys = nil`.
+    /// **Deprecated as of D-4** — recordings live in `MacroStore` now,
+    /// referenced from this account via `activeMacroId`. This field
+    /// stays on the type for one release to keep the migration path
+    /// readable: `AutoKeysLibraryMigrator` reads pre-D-4 on-disk values
+    /// here and promotes them to library macros. Production code
+    /// paths past D-4.4 never write to this field. On-disk shape is
+    /// preserved until the next `AccountStore.save()` after migration.
     public var autoKeys: AutoKeysSequence?
     /// Shared-recording reference (ADR 0007 Decision 7). When set, the
     /// cycler resolves this account's playback through the *source*

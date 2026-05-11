@@ -132,6 +132,10 @@ public final class AccountStore {
     /// enforced inside `AutoKeysSequence`'s failable initializer, so
     /// callers either pass a valid sequence or nil. No-op when `userId`
     /// doesn't match a saved account.
+    /// **Deprecated as of D-4** — use `setActiveMacroId(userId:macroId:)`
+    /// + `MacroStore.upsert(_:)`. The method stays for the migration
+    /// path's test coverage and any one-release downgrade rollback;
+    /// production UI never calls it past D-4.4.
     public func setAutoKeys(userId: String, sequence: AutoKeysSequence?) {
         guard let idx = accounts.firstIndex(where: { $0.userId == userId }) else { return }
         accounts[idx].autoKeys = sequence
@@ -180,12 +184,11 @@ public final class AccountStore {
         save()
     }
 
-    /// Set or clear the consumer-side sharing reference (ADR 0007
-    /// Decision 7, D-3.5). When non-nil, the cycler plays the source
-    /// account's recording instead of this account's own. nil reverts
-    /// to "play my own recording" (or skip if empty). The resolver
-    /// (`AutoKeysSharingResolver`) handles orphaned / non-shared
-    /// source cases at cycle-start time; setting here doesn't validate.
+    /// **Deprecated as of D-4** — D-3.5 cross-account sharing
+    /// references have been replaced by direct `activeMacroId` ids
+    /// pointing at library macros. Use `setActiveMacroId(userId:macroId:)`
+    /// instead. This method stays one release; the migrator reads
+    /// pre-D-4 on-disk values and translates them.
     public func setAutoKeysSourceAccountId(userId: String, sourceUserId: String?) {
         guard let idx = accounts.firstIndex(where: { $0.userId == userId }) else { return }
         accounts[idx].autoKeysSourceAccountId = sourceUserId

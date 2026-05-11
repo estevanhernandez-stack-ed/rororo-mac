@@ -41,18 +41,43 @@ The toolbar shows: which account is currently being driven, which is next, the e
 - **Hit the toolbar Stop button** → full stop, releases the wake-lock.
 - **Use your kill-key gesture** (configured in the Auto-keys safety setup) → also stops, with the same effect as the toolbar button. *Note: this path has had reliability issues; if the kill key doesn't fire, fall back to the toolbar Stop button or click on another app.*
 
+## The macro library
+
+As of D-4 (May 2026), recordings are first-class **macros** that live in a shared library, not per-account fields. Every macro has a stable id, an owner attribution, and a shared flag — any account can be bound to any shared macro, and any macro can be renamed / shared / deleted without re-recording.
+
+**The library lives at** `~/Library/Application Support/RORORO/macros.json`. The toolbar's cycler chevron menu has a **Macros…** entry that opens the management view: every macro across every account in one list, with inline rename (pencil icon), share toggle, and delete (with confirmation that warns which accounts will fall back to the global default).
+
+If you used RORORO before D-4 shipped, your existing recordings migrated automatically on first boot — every account's recording became a Macro with that account as owner, and any cross-account sharing reference translated to a direct macro reference. No re-recording needed.
+
 ## Sharing a recording across accounts
 
-If multiple accounts should run the same sequence (e.g., jump-spam, identical farming loop), record it once and share:
+If multiple accounts should run the same macro (e.g., jump-spam, identical farming loop), record it once and bind multiple accounts to it:
 
-1. On the *owner* account's row, record your sequence as above.
-2. In the recorder sheet's post-record review, toggle **Share this recording** on, then Save.
-3. On any *consumer* account's row, **right-click** the auto-keys chip → **Use shared recording** → pick the owner. The consumer's chip updates to show `USING [Owner]`.
-4. Press Play. Both accounts now run the same recording against their own Roblox windows. Window-relative coords mean the mouse clicks land correctly even if the windows are at different positions or sizes.
+1. On account A's row, record your sequence. In the post-record review, leave **Share this recording** on (the default) and Save. The macro lands in the library.
+2. On account B's row, **right-click** the auto-keys chip → **Use macro** → pick A's recording from the submenu. The consumer's chip updates to show `A · MACRO NAME`. The picker also appears as the **ACTIVE MACRO** section inside the V2 sheet (left-click) for discoverability.
+3. Press Play. Both accounts now run the same macro against their own Roblox windows. Window-relative coords mean the mouse clicks land correctly even if the windows are at different positions or sizes.
 
-**Reverting to own recording:** right-click the chip on the consumer → **Use my own recording**.
+**Switching macros:** right-click the chip → **Use macro** picks a different one, **Use my recording** lists this account's own macros, **Clear active macro** unbinds.
 
-**If the source goes away:** the badge shows `SHARED · MISSING` in a warning color. Right-click → either clear the reference or pick a new source.
+**If a macro is deleted from the library:** any account bound to it falls back to the global default (or skip if none configured). The badge shows `MACRO · MISSING` in a warning color until you pick a new one or clear the reference.
+
+**Toggling share off:** in the management view, flip the per-row Switch to hide a macro from other accounts' pickers. The owner can still see and use it.
+
+## Default for unrecorded accounts
+
+The cycler toolbar's chevron menu has a **Default for unrecorded accounts** submenu. Three options:
+
+- **Skip (do nothing)** — current behavior, accounts without an active macro are skipped on each cycle.
+- **Stay alive (spacebar)** — built-in synthesis: focus → 1 s → spacebar → next iteration. Identical playback to the existing stay-awake-mode toggle, but as a fallback for unconfigured accounts only.
+- **Use [Account] / [Macro Name]** — one entry per shared macro in the library. Any account without an active macro plays this one.
+
+**Custom recordings + explicit macro selections still win over the default.** The default is the bottom of a four-tier waterfall:
+
+1. account.activeMacroId → look up in library
+2. global default (this setting)
+3. (none — cycler skips)
+
+This is distinct from the **Stay-awake mode** toggle, which is a global *override* (every running account gets synthesized spacebar regardless of recordings). Stay-awake wins when both are on.
 
 ## Legacy recordings
 
@@ -67,8 +92,11 @@ If you set up auto-keys before D-3 (the action-stream slope), your row's chip sh
 ## Where things live (for the curious)
 
 - The recorder UI: `App/RORORO/UI/AutoKeysRecorderV2Sheet.swift`
+- The library management view: `App/RORORO/UI/MacroLibrarySheet.swift`
+- The macro entity + store: `App/RORORO/Domain/AutoKeys/Macro.swift` + `MacroStore.swift`
 - The capture engine: `App/RORORO/Domain/AutoKeys/ActionStreamRecorder.swift`
 - The replay engine: `App/RORORO/Domain/AutoKeys/ActionStreamPlayer.swift`
 - The cycler: `App/RORORO/Domain/AutoKeys/AutoKeysCycler.swift`
-- Sharing resolution: `App/RORORO/Domain/AutoKeys/AutoKeysSharingResolver.swift`
-- Specs: `docs/decisions/0007-full-fidelity-record-and-replay.md` (canonical) + `docs/decisions/0004-auto-keys-cycler.md` (original ADR, amended)
+- Sharing resolution (library-aware): `App/RORORO/Domain/AutoKeys/AutoKeysSharingResolver.swift`
+- D-3 → D-4 migration: `App/RORORO/Domain/AutoKeys/AutoKeysLibraryMigrator.swift`
+- Specs: `docs/decisions/0008-macro-library-refactor.md` (current canonical) + `docs/decisions/0007-full-fidelity-record-and-replay.md` (recorder/player layer) + `docs/decisions/0004-auto-keys-cycler.md` (cycler foundation, amended for both slopes)
