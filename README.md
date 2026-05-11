@@ -39,6 +39,7 @@ Requires macOS 14 (Sonoma) or later.
 - **Saved Roblox accounts.** Add your alts once via an embedded login window. Click *Launch As* to spawn each one.
 - **Keychain-backed cookie vault.** Saved cookies live in your login Keychain (`kSecAttrAccessibleWhenUnlocked` + `kSecAttrSynchronizable: false`). They never leave your Mac and never sync to iCloud.
 - **Per-game launch routing.** Set a default Roblox game URL once; *Launch As* lands every alt in that game.
+- **Auto-keys macro cycler.** Record keyboard + mouse macros per account; the cycler walks through each running Roblox window and replays them to keep accounts alive past the AFK timer. Macros live in a shared library, can be renamed / shared / managed without re-recording. Full guide: [`docs/user/auto-keys-recording.md`](docs/user/auto-keys-recording.md).
 - **Menu-bar tray.** State-coloured ring shows multi-instance status at a glance (cyan = on, slate = off, magenta = error).
 - **Sparkle auto-update.** EdDSA-signed appcast hosted at `https://estevanhernandez-stack-ed.github.io/rororo-mac/appcast.xml`. Drift-compatible with future Roblox-side changes.
 - **No telemetry.** Anonymous GitHub Releases download counts only.
@@ -115,6 +116,7 @@ xcodebuild -project App/RORORO.xcodeproj -scheme RORORO test \
 
 ## Documentation
 
+- **Auto-keys macro cycler — user guide:** [`docs/user/auto-keys-recording.md`](docs/user/auto-keys-recording.md) — record macros, share them across accounts, manage the library, configure the default for unrecorded accounts.
 - **Privacy policy:** [`docs/PRIVACY.md`](docs/PRIVACY.md)
 - **Technical spec:** [`docs/spec.md`](docs/spec.md)
 - **PRD:** [`docs/prd.md`](docs/prd.md)
