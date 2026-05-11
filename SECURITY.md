@@ -21,7 +21,22 @@ Please include:
 - The version of RORORO Mac affected (Settings → About).
 - The macOS version you reproduced it on.
 
-If you'd prefer encrypted email, request a GPG public key in your initial message and one will be sent before you share specifics.
+### GPG / encrypted email
+
+The maintainer's GPG public key is published for researchers handling sensitive details (real cookie leaks, key-compromise findings, anything you'd rather not put on the wire in plaintext).
+
+- **Fingerprint:** `E52F 4A54 4426 1AE7 0D12  D817 B928 75D4 F623 6B8A`
+- **Key ID (short):** `0xB92875D4F6236B8A`
+- **Algorithm:** Ed25519 (sign) + Curve25519 (encrypt)
+- **UID:** `Estevan Hernandez <estevan@626labs.dev>`
+
+Fetch via keyserver:
+
+```bash
+gpg --keyserver hkps://keys.openpgp.org --recv-keys E52F4A5444261AE70D12D817B92875D4F6236B8A
+```
+
+Verify the fingerprint matches `E52F 4A54 4426 1AE7 0D12 D817 B928 75D4 F623 6B8A` before encrypting. Don't trust a key fetched by a key ID alone — always confirm the full 40-character fingerprint.
 
 ## Disclosure timeline
 

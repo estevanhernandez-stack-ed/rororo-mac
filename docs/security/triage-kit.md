@@ -182,5 +182,8 @@ These are one-time setup tasks. Tick when done.
 
 - [x] Gmail filter on estevan@626labs.dev for security-keyword matches with phone push notification. *(Confirmed 2026-05-11.)*
 - [x] GitHub Private Vulnerability Reporting enabled. *(Confirmed 2026-05-11 via `gh api -X PUT /repos/.../private-vulnerability-reporting`.)*
-- [ ] GPG keypair generated for estevan@626labs.dev. Fingerprint inlined in `SECURITY.md`. Public key uploaded to keys.openpgp.org and `gh gpg-key add`.
+- [x] GPG keypair generated for estevan@626labs.dev. Fingerprint inlined in `SECURITY.md`. *(Confirmed 2026-05-11. Fingerprint `E52F 4A54 4426 1AE7 0D12  D817 B928 75D4 F623 6B8A`.)*
+- [ ] Public key uploaded to keys.openpgp.org (email verification clicked).
+- [ ] Public key added to GitHub via `gh gpg-key add`.
+- [ ] Private key backup exported to 1Password; export file deleted from disk.
 - [ ] First-report dry-run with a fake report (optional but recommended) — walk through this kit end-to-end before a real one arrives.

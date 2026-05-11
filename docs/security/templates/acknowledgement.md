@@ -41,10 +41,10 @@ A few quick checks while I work on this:
 
   2. If you sent the report unencrypted and would prefer to share
      additional detail over GPG, my public key fingerprint is:
-       <PUBLISHED_GPG_FINGERPRINT_HERE>
-     (Or omit if GPG isn't set up yet; replace with: "GPG isn't set up
-     for this project yet — let me know if you'd like to wait while
-     I generate a key.")
+       E52F 4A54 4426 1AE7 0D12  D817 B928 75D4 F623 6B8A
+     Fetch via: gpg --keyserver hkps://keys.openpgp.org \
+                    --recv-keys E52F4A5444261AE70D12D817B92875D4F6236B8A
+     Verify the full fingerprint matches before encrypting.
 
   3. Any pseudonym, handle, or attribution preferences for the eventual
      advisory? Let me know now so the published advisory matches.
