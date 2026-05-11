@@ -56,12 +56,18 @@ public struct Account: Codable, Equatable, Identifiable, Sendable {
     public var autoKeys: AutoKeysSequence?
     /// Shared-recording reference (ADR 0007 Decision 7). When set, the
     /// cycler resolves this account's playback through the *source*
-    /// account's `autoKeys` instead of its own. nil ≡ "use my own
-    /// recording." Source must have `isShared = true` on its
-    /// `AutoKeysSequence`; orphaned references (source deleted or
-    /// un-shared) skip the consumer on cycle start with a log. Codable
-    /// migration: pre-D-3 `accounts.json` files decode with this nil.
+    /// account's `autoKeys` instead of its own. **Deprecated as of
+    /// D-4.2** — the library migration translates this field into
+    /// `activeMacroId` pointing at the owner's migrated macro. Kept on
+    /// the type for one release for downgrade-safety; new code paths
+    /// never write to it.
     public var autoKeysSourceAccountId: Account.ID?
+    /// D-4.2 — the macro this account currently plays. Resolves
+    /// against `MacroStore`. nil ≡ "no macro selected" (cycler skips
+    /// the account unless the global default applies). The library
+    /// migration sets this from the legacy `autoKeys` /
+    /// `autoKeysSourceAccountId` fields on first boot.
+    public var activeMacroId: String?
 
     public var id: String { userId }
 
@@ -76,7 +82,8 @@ public struct Account: Codable, Equatable, Identifiable, Sendable {
         cookieCheckedAt: Date? = nil,
         groupName: String? = nil,
         autoKeys: AutoKeysSequence? = nil,
-        autoKeysSourceAccountId: Account.ID? = nil
+        autoKeysSourceAccountId: Account.ID? = nil,
+        activeMacroId: String? = nil
     ) {
         self.userId = userId
         self.username = username
@@ -89,6 +96,7 @@ public struct Account: Codable, Equatable, Identifiable, Sendable {
         self.groupName = groupName
         self.autoKeys = autoKeys
         self.autoKeysSourceAccountId = autoKeysSourceAccountId
+        self.activeMacroId = activeMacroId
     }
 }
 

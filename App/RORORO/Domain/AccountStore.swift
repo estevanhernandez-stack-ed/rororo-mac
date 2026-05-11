@@ -138,6 +138,48 @@ public final class AccountStore {
         save()
     }
 
+    /// D-4.2 — set or clear the account's active macro reference.
+    /// nil reverts to "no macro" (cycler skips unless the global
+    /// default applies). The macro itself lives in `MacroStore`;
+    /// AccountStore just stores the id reference.
+    public func setActiveMacroId(userId: String, macroId: String?) {
+        guard let idx = accounts.firstIndex(where: { $0.userId == userId }) else { return }
+        accounts[idx].activeMacroId = macroId
+        save()
+    }
+
+    /// Cascade: when a macro is deleted from the library, every account
+    /// currently pointing at it loses its `activeMacroId`. MacroStore
+    /// callers invoke this after `delete(id:)` to keep the references
+    /// clean.
+    public func clearReferencesToMacro(id macroId: String) {
+        var changed = false
+        for i in accounts.indices where accounts[i].activeMacroId == macroId {
+            accounts[i].activeMacroId = nil
+            changed = true
+        }
+        if changed { save() }
+    }
+
+    /// D-4.2 — translate any pre-library `autoKeys` /
+    /// `autoKeysSourceAccountId` state into the library model.
+    /// Idempotent. Production calls this on app boot via
+    /// `migrateAutoKeysIfNeeded()`; tests pass a test MacroStore
+    /// directly.
+    public func migrateAutoKeysToLibrary(via macroStore: MacroStore) {
+        let outcome = AutoKeysLibraryMigrator.migrate(
+            accounts: accounts,
+            existingMacros: macroStore.macros
+        )
+        guard !outcome.createdMacros.isEmpty
+              || outcome.updatedAccounts != accounts else { return }
+        for macro in outcome.createdMacros {
+            macroStore.upsert(macro)
+        }
+        accounts = outcome.updatedAccounts
+        save()
+    }
+
     /// Set or clear the consumer-side sharing reference (ADR 0007
     /// Decision 7, D-3.5). When non-nil, the cycler plays the source
     /// account's recording instead of this account's own. nil reverts

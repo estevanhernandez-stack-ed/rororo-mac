@@ -53,6 +53,14 @@ struct ROROROApp: App {
                        let updater = UpdaterHost.shared.updater {
                         checkForUpdatesViewModel = CheckForUpdatesViewModel(updater: updater)
                     }
+                    // D-4.2 — promote any pre-library autoKeys to the
+                    // MacroStore. Idempotent; no-op after the first
+                    // boot. Runs synchronously on the main actor so
+                    // the cycler view-model sees the migrated state
+                    // from its first read.
+                    AccountStore.shared.migrateAutoKeysToLibrary(
+                        via: MacroStore.shared
+                    )
                     // Best-effort refresh across all saved accounts on
                     // boot — cookie-health probe (Slope B3') plus
                     // display-name + avatar refresh (Slope B2'). Async
