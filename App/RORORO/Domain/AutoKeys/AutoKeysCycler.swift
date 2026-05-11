@@ -193,6 +193,21 @@ public actor AutoKeysCycler {
         engagementDeadline = nil
         let summary = active.map { "\($0.label ?? "?")[pid=\($0.pid),steps=\($0.sequence.steps.count)]" }.joined(separator: ", ")
         NSLog("[RORORO] cycler: starting with \(active.count) target(s): \(summary), loopDelay=\(loopDelay)s")
+
+        // Race-fix (user-reported 2026-05-10) — pre-populate the rect
+        // tracker for EVERY target before any focus call fires. Without
+        // this, focusing the second window races the safety monitor's
+        // focus-theft observer: macOS fires the activation event for
+        // pid N+1 before the cycler's own `tracker.refresh(pid:)` runs
+        // for it, so the observer sees pid N+1 NOT in `tracker
+        // .currentPids()` → flags it as theft → pauses the cycler
+        // immediately. Pre-populating means every cycled pid is
+        // already "tracked" when its first activation event lands.
+        if let tracker {
+            for target in active {
+                await tracker.refresh(pid: target.pid)
+            }
+        }
         updateState(.running(pids: pids))
 
         // Subscribe to safety events BEFORE the loop spawns so the very
