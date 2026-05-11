@@ -8,9 +8,11 @@
 // RORORO (this sheet visible), capture pauses — the indicator surfaces
 // "PAUSED — Roblox not frontmost" so the user knows to Cmd-Tab back.
 //
-// Replaces the legacy `AutoKeysRecorderSheet` as the per-row chip's
-// entry point. The legacy sheet's source stays in the codebase for any
-// in-flight migration; D-3.6 removes it from the surface entirely.
+// The per-row chip's entry point. Legacy step-list sequences from
+// ADR 0004 still load (via `AutoKeysSequence.legacy`) and run via the
+// cycler's legacy variant path — but they can no longer be edited
+// in-place; re-recording in this sheet produces a stream variant that
+// overwrites cleanly. D-3.6 removed the legacy sheet from the codebase.
 //
 // View-model lives in this file (private to the sheet) — owns an
 // `ActionStreamRecorder`, polls its async state at 10 Hz, exposes

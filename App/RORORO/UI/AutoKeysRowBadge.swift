@@ -113,7 +113,10 @@ struct AutoKeysRowBadge: View {
         case let .ownRecording(seq):
             switch seq.variant {
             case .legacy:
-                return "\(seq.steps.count) KEY\(seq.steps.count == 1 ? "" : "S") · \(formatSeconds(seq.totalDuration))"
+                // LEGACY prefix flags pre-ADR-0007 sequences for the eye
+                // scanner — re-recording opens the V2 sheet which writes
+                // a stream variant on save.
+                return "LEGACY · \(seq.steps.count) KEY\(seq.steps.count == 1 ? "" : "S")"
             case .stream:
                 let count = seq.actions.count
                 return "\(count) ACT\(count == 1 ? "" : "S") · \(formatSeconds(seq.totalDuration))"

@@ -150,6 +150,19 @@ Decision 1's keystroke-delivery posture also tightens via Wave D-1: the cycler n
 
 The hard rules don't move. Defensive + UX safety only. No anti-detection.
 
+## Amendment — 2026-05-10 (Slope D, Wave 3 / ADR 0007 shipped)
+
+ADR 0007 (Full-fidelity record-and-replay) shipped across six commits on 2026-05-10. It **retracts Decision 2 (3-key cap)** and **Decision 5 (per-step interactive recorder)** from this ADR — but does not invalidate them. Existing on-disk sequences from this ADR's shape continue to load and run unchanged via `AutoKeysSequence.Variant.legacy`; the cycler's legacy step-loop path is preserved and exercised by the unit tests. Re-recording produces a stream variant that overwrites cleanly. No user is forced to migrate.
+
+What landed:
+- Action stream replaces the 3-step cap (`AutoKeysSequence.Variant.stream([AutoKeysAction])`, 500-action ceiling, includes mouse).
+- TinyTask-style record/stop UX via global hotkey (default Ctrl+Opt+Shift+P, user-rebindable). Hotkey is filtered from the captured stream.
+- Window-relative mouse coords (`WindowRectTracker` from D-1 is the live origin lookup).
+- Per-account sharing via `Account.autoKeysSourceAccountId` + `AutoKeysSharingResolver`.
+- Legacy step-list editor removed from the UI surface (the cycler still RUNS legacy sequences; you can only re-record them, not edit in place).
+
+Decisions 1, 3, 4, 6, 7, 8, 9, 10 of this ADR remain load-bearing in their original form. The plan-of-record for the slope is `docs/plans/d3-record-and-replay.md`.
+
 ## References
 
 - Founding posture: `~/.claude/projects/-Users-estevanhernandez-projects-rororo-mac/memory/feedback_app_store_posture.md` (capability ambition + ethical clarity, App Store opt-out accepted).

@@ -1,9 +1,9 @@
 // CycleBudget.swift
 // Domain — pure validator + threshold constants for the auto-keys
-// cycle (Slope C). Two consumers:
-//   - `AutoKeysRecorderSheet` — live preview as the user records.
-//   - `AutoKeysCycler` — refuses to start (and bails mid-flight) if the
-//     estimated cycle exceeds `hardCap`.
+// cycle (Slope C). The cycler refuses to start (and bails mid-flight)
+// when an estimated cycle exceeds `hardCap`. The V2 recorder reads
+// `totalDuration` per sequence to surface live cap warnings on
+// over-budget recordings.
 //
 // Per ADR 0004 Decision 4, Roblox's AFK timer is ~20 min per window;
 // the cycle must revisit each window before its individual timer
