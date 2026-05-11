@@ -27,6 +27,7 @@ struct MacroLibrarySheet: View {
     @State private var editingMacroId: String?
     @State private var editingName: String = ""
     @State private var pendingDelete: Macro?
+    @State private var recordingFor: Account?
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
@@ -57,13 +58,22 @@ struct MacroLibrarySheet: View {
                 Text("\"\(m.name)\" will be removed from the library. Any account currently bound to it will fall back to the global default (or skip if none).")
             }
         }
+        .sheet(item: $recordingFor) { account in
+            AutoKeysRecorderV2Sheet(
+                isPresented: Binding(
+                    get: { recordingFor != nil },
+                    set: { newValue in if !newValue { recordingFor = nil } }
+                ),
+                account: account
+            )
+        }
     }
 
     // MARK: - Sections
 
     private var header: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-            HStack {
+            HStack(spacing: Theme.Spacing.md) {
                 Text("Macros")
                     .font(Theme.Font.heading2)
                     .foregroundStyle(Theme.Color.fg1)
@@ -71,12 +81,48 @@ struct MacroLibrarySheet: View {
                 Text("\(store.macros.count) total")
                     .font(Theme.Font.bodySmall)
                     .foregroundStyle(Theme.Color.fg3)
+                recordNewButton
             }
-            Text("Every recording across every account. Rename inline, toggle sharing, or delete. Recording new macros happens on the per-account row chips.")
+            Text("Every recording across every account. Rename inline, toggle sharing, delete, or record a new macro for any account with a running Roblox window.")
                 .font(Theme.Font.bodySmall)
                 .foregroundStyle(Theme.Color.fg2)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// D-4.5+ — "Record new…" affordance in the library header. Lists
+    /// every account with a currently-running Roblox window (the
+    /// recorder needs a target pid). Picking one opens the V2 recorder
+    /// sheet stacked over this one; on save, the new macro lands in
+    /// the library and the picked account's activeMacroId binds to it.
+    private var recordNewButton: some View {
+        let tracker = RunningAccountTracker.shared
+        // Side-effect on body render is OK here — backfillFromRunningProcesses
+        // is idempotent and the tracker map is the source of truth for
+        // "which Roblox windows are alive right now."
+        _ = tracker.backfillFromRunningProcesses()
+        let runningAccounts = accountStore.accounts.filter {
+            tracker.pid(for: $0.userId) != nil
+        }
+        return Menu {
+            if runningAccounts.isEmpty {
+                Text("No running Roblox windows — Launch As on an account first")
+            } else {
+                ForEach(runningAccounts, id: \.id) { account in
+                    Button(account.displayName) {
+                        recordingFor = account
+                    }
+                }
+            }
+        } label: {
+            Label("Record new…", systemImage: "record.circle")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(runningAccounts.isEmpty)
+        .help(runningAccounts.isEmpty
+              ? "Launch a Roblox window for any account first, then come back to record."
+              : "Pick which running account to record for.")
     }
 
     private var emptyState: some View {
@@ -87,9 +133,12 @@ struct MacroLibrarySheet: View {
             Text("No macros yet")
                 .font(Theme.Font.heading2)
                 .foregroundStyle(Theme.Color.fg2)
-            Text("Click the auto-keys chip on any account row to record your first one.")
+            Text("Click \"Record new…\" above against an account with a running Roblox window, or hit the auto-keys chip on any account row.")
                 .font(Theme.Font.bodySmall)
                 .foregroundStyle(Theme.Color.fg3)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, Theme.Spacing.xl)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
