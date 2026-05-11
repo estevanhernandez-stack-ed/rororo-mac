@@ -210,7 +210,20 @@ struct AutoKeysRecorderV2Sheet: View {
     @ViewBuilder
     private var postRecordControls: some View {
         if viewModel.phase == .stopped {
-            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+            VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+                VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+                    Text("NAME")
+                        .font(Theme.Font.bodySmall)
+                        .foregroundStyle(Theme.Color.fg2)
+                        .tracking(0.7)
+                    TextField("e.g. Combat rotation", text: $viewModel.macroName)
+                        .textFieldStyle(.roundedBorder)
+                        .font(Theme.Font.body)
+                    Text("Optional. Shows in the row badge + sharing picker. Leave blank to just see action count.")
+                        .font(Theme.Font.bodySmall)
+                        .foregroundStyle(Theme.Color.fg3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Toggle(isOn: $viewModel.isShared) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Share this recording")
@@ -341,6 +354,11 @@ private final class RecorderV2ViewModel {
     var isCapturePaused: Bool = false
     var didCap: Bool = false
     var isShared: Bool = false
+    /// User-typed label for this recording. Persisted on Save iff the
+    /// trimmed value is non-empty (collapse-to-nil happens inside
+    /// `AutoKeysSequence`). Pre-populates from the existing sequence's
+    /// name when re-recording so the user can keep it or change it.
+    var macroName: String = ""
     var preflightMessage: String?
     var hotkey: KillKeyCombo
 
@@ -360,6 +378,12 @@ private final class RecorderV2ViewModel {
         self.windowRectTracker = .shared
         self.settings = .shared
         self.hotkey = LaunchSettingsStore.shared.recorderHotkey
+        // Pre-populate macroName from an existing stream recording so
+        // the user can keep the label across a re-record without
+        // retyping. Legacy variants have no name.
+        if let existing = account.autoKeys, let n = existing.name {
+            self.macroName = n
+        }
         self.recorder = ActionStreamRecorder(
             source: NSEventRecorderEventSource(),
             tracker: .shared,
@@ -459,7 +483,8 @@ private final class RecorderV2ViewModel {
         guard !capturedActions.isEmpty else { return }
         guard let sequence = AutoKeysSequence(
             actions: capturedActions,
-            isShared: isShared
+            isShared: isShared,
+            name: macroName
         ) else {
             preflightMessage = "Recording exceeded the \(AutoKeysSequence.maxActionCount)-action cap. Re-record shorter."
             return

@@ -57,9 +57,10 @@ struct AutoKeysRowBadge: View {
         } else {
             Menu("Use shared recording") {
                 ForEach(shareables, id: \.id) { owner in
+                    let label = pickerLabel(for: owner)
                     Button(account.autoKeysSourceAccountId == owner.id
-                           ? "✓ \(owner.displayName)"
-                           : owner.displayName) {
+                           ? "✓ \(label)"
+                           : label) {
                         store.setAutoKeysSourceAccountId(
                             userId: account.userId,
                             sourceUserId: owner.id
@@ -98,6 +99,16 @@ struct AutoKeysRowBadge: View {
         }
     }
 
+    /// Render a picker label that includes the source's macro name
+    /// when set ("Alice · Combat rotation"); falls back to bare display
+    /// name when the recording is unnamed.
+    private func pickerLabel(for owner: Account) -> String {
+        if let macroName = owner.autoKeys?.name {
+            return "\(owner.displayName) · \(macroName)"
+        }
+        return owner.displayName
+    }
+
     // MARK: - Label
 
     /// Resolves the effective sequence the cycler will play (own vs
@@ -118,12 +129,18 @@ struct AutoKeysRowBadge: View {
                 // a stream variant on save.
                 return "LEGACY · \(seq.steps.count) KEY\(seq.steps.count == 1 ? "" : "S")"
             case .stream:
+                if let name = seq.name {
+                    return name.uppercased()
+                }
                 let count = seq.actions.count
                 return "\(count) ACT\(count == 1 ? "" : "S") · \(formatSeconds(seq.totalDuration))"
             }
-        case let .sharedFrom(sourceId, _):
-            let name = store.accounts.first(where: { $0.id == sourceId })?.displayName ?? "?"
-            return "USING \(name.uppercased())"
+        case let .sharedFrom(sourceId, seq):
+            let ownerName = store.accounts.first(where: { $0.id == sourceId })?.displayName ?? "?"
+            if let macroName = seq.name {
+                return "\(ownerName.uppercased()) · \(macroName.uppercased())"
+            }
+            return "USING \(ownerName.uppercased())"
         case .orphaned, .sourceNotShared:
             return "SHARED · MISSING"
         }

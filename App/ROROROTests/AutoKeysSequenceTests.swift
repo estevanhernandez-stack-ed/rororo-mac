@@ -222,4 +222,85 @@ final class AutoKeysSequenceTests: XCTestCase {
         XCTAssertTrue(seq.isStream)
         XCTAssertFalse(seq.isShared)
     }
+
+    // MARK: - D-3.7 — macro naming
+
+    func testInit_StreamWithName_StoresTrimmedName() {
+        let seq = AutoKeysSequence(
+            actions: [.keyDown(keyCode: 49, modifiers: 0, dt: 0)],
+            name: "  Combat rotation  "
+        )!
+        XCTAssertEqual(seq.name, "Combat rotation")
+    }
+
+    func testInit_StreamWithEmptyOrWhitespaceName_NormalizesToNil() {
+        let empty = AutoKeysSequence(
+            actions: [.keyDown(keyCode: 49, modifiers: 0, dt: 0)],
+            name: ""
+        )!
+        XCTAssertNil(empty.name)
+
+        let whitespace = AutoKeysSequence(
+            actions: [.keyDown(keyCode: 49, modifiers: 0, dt: 0)],
+            name: "   \n\t  "
+        )!
+        XCTAssertNil(whitespace.name)
+    }
+
+    func testInit_LegacyAlwaysHasNilName() {
+        let seq = AutoKeysSequence(steps: [.spacebar()])!
+        XCTAssertNil(seq.name)
+    }
+
+    func testVariantInit_LegacyVariant_DropsName() {
+        // Direct-variant init for a `.legacy` variant must drop any
+        // passed name — legacy on-disk shape is byte-stable.
+        let seq = AutoKeysSequence(
+            variant: .legacy([.spacebar()]),
+            name: "Should not stick"
+        )
+        XCTAssertNil(seq.name)
+    }
+
+    func testRoundTrip_StreamWithName_PreservesName() throws {
+        let original = AutoKeysSequence(
+            actions: [.keyDown(keyCode: 13, modifiers: 0, dt: 0)],
+            isShared: false,
+            name: "Farming loop"
+        )!
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(AutoKeysSequence.self, from: data)
+        XCTAssertEqual(decoded.name, "Farming loop")
+        XCTAssertEqual(decoded, original)
+    }
+
+    func testEncode_StreamWithoutName_OmitsKey() throws {
+        let seq = AutoKeysSequence(
+            actions: [.keyDown(keyCode: 13, modifiers: 0, dt: 0)],
+            name: nil
+        )!
+        let data = try JSONEncoder().encode(seq)
+        let dict = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        XCTAssertNil(dict["name"], "Stream with nil name should omit the key, got: \(dict)")
+    }
+
+    func testEncode_LegacyNeverEmitsName() throws {
+        let seq = AutoKeysSequence(steps: [.spacebar()])!
+        let data = try JSONEncoder().encode(seq)
+        let dict = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        XCTAssertNil(dict["name"])
+        XCTAssertNil(dict["isShared"])
+        XCTAssertNotNil(dict["steps"])
+    }
+
+    func testDecode_LegacyWithSpuriousNameField_StillDecodesAsLegacyWithNilName() throws {
+        // Defensive: an injected `name` on a legacy `{"steps":[…]}`
+        // payload should be ignored. Legacy variants never carry a name.
+        let json = """
+        { "steps": [ { "keyCode": 49, "delayAfter": 1 } ], "name": "ignored" }
+        """.data(using: .utf8)!
+        let seq = try JSONDecoder().decode(AutoKeysSequence.self, from: json)
+        XCTAssertTrue(seq.isLegacy)
+        XCTAssertNil(seq.name)
+    }
 }

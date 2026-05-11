@@ -46,6 +46,13 @@ public struct AutoKeysSequence: Codable, Equatable, Sendable {
     /// `.stream` variants — legacy sequences require a re-record to
     /// share. Default false so opting in is explicit.
     public let isShared: Bool
+    /// Optional user-supplied label for this recording — e.g. "Combat
+    /// rotation", "Farming loop", "AFK jump-spam". Surfaces in the row
+    /// badge, the sharing picker, and post-record review. nil ≡
+    /// unnamed (the sequence falls back to action-count + duration in
+    /// the badge). Legacy variants don't carry names — re-record to
+    /// promote to stream and add one.
+    public let name: String?
 
     // MARK: - Init
 
@@ -56,23 +63,42 @@ public struct AutoKeysSequence: Codable, Equatable, Sendable {
     public init?(steps: [AutoKeysStep]) {
         self.variant = .legacy(steps)
         self.isShared = false
+        self.name = nil
     }
 
     /// Stream entry point — produces a `.stream` variant. Returns nil if
     /// `actions.count > maxActionCount` (ADR 0007 Decision 1 cap).
-    public init?(actions: [AutoKeysAction], isShared: Bool = false) {
+    public init?(
+        actions: [AutoKeysAction],
+        isShared: Bool = false,
+        name: String? = nil
+    ) {
         guard actions.count <= Self.maxActionCount else { return nil }
         self.variant = .stream(actions)
         self.isShared = isShared
+        self.name = Self.normalize(name: name)
     }
 
     /// Direct-variant entry point — used by tests and migration. Does
     /// not enforce the action cap (callers building from already-validated
     /// data don't need it re-checked). Production code paths funnel
     /// through `init?(actions:)` or the legacy `init?(steps:)`.
-    public init(variant: Variant, isShared: Bool = false) {
+    public init(variant: Variant, isShared: Bool = false, name: String? = nil) {
         self.variant = variant
         self.isShared = isShared
+        // Legacy variants can't carry a name — the on-disk shape is
+        // byte-stable per ADR 0007 Decision 4. Drop name for legacy.
+        switch variant {
+        case .legacy: self.name = nil
+        case .stream: self.name = Self.normalize(name: name)
+        }
+    }
+
+    /// Trim + nil-empty-string. Whitespace-only or empty names collapse
+    /// to nil so the badge doesn't render a stray dot.
+    private static func normalize(name: String?) -> String? {
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (trimmed?.isEmpty == false) ? trimmed : nil
     }
 
     // MARK: - Accessors
@@ -128,6 +154,7 @@ public struct AutoKeysSequence: Codable, Equatable, Sendable {
         case steps
         case actions
         case isShared
+        case name
     }
 
     public init(from decoder: Decoder) throws {
@@ -138,17 +165,21 @@ public struct AutoKeysSequence: Codable, Equatable, Sendable {
         if c.contains(.actions) {
             let actions = try c.decode([AutoKeysAction].self, forKey: .actions)
             let shared = try c.decodeIfPresent(Bool.self, forKey: .isShared) ?? false
+            let name = try c.decodeIfPresent(String.self, forKey: .name)
             self.variant = .stream(actions)
             self.isShared = shared
+            self.name = Self.normalize(name: name)
         } else if c.contains(.steps) {
             let steps = try c.decode([AutoKeysStep].self, forKey: .steps)
             self.variant = .legacy(steps)
             self.isShared = false
+            self.name = nil
         } else {
             // No payload at all → treat as empty legacy. Defensive — the
             // shape shouldn't reach disk but won't crash if it does.
             self.variant = .legacy([])
             self.isShared = false
+            self.name = nil
         }
     }
 
@@ -157,12 +188,14 @@ public struct AutoKeysSequence: Codable, Equatable, Sendable {
         switch variant {
         case let .legacy(steps):
             // Re-emit the byte-stable ADR-0004 shape so legacy on-disk
-            // payloads round-trip unchanged. `isShared` is meaningless
-            // for legacy and omitted to keep diffs clean (Decision 4).
+            // payloads round-trip unchanged. `isShared` + `name` are
+            // meaningless for legacy and omitted to keep diffs clean
+            // (Decision 4).
             try c.encode(steps, forKey: .steps)
         case let .stream(actions):
             try c.encode(actions, forKey: .actions)
             try c.encode(isShared, forKey: .isShared)
+            try c.encodeIfPresent(name, forKey: .name)
         }
     }
 }
