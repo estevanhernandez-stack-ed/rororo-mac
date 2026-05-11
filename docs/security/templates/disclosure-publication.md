@@ -126,7 +126,7 @@ fixed in {RELEASE_TAG} on {RELEASE_DATE}.
 
 ## References
 
-  • Threat model: [docs/generated/threat-model.md](https://github.com/estevanhernandez-stack-ed/rororo-mac/blob/main/docs/generated/threat-model.md)
+  • Threat model: [docs/security/threat-model.md](https://github.com/estevanhernandez-stack-ed/rororo-mac/blob/main/docs/security/threat-model.md)
   • Security policy: [SECURITY.md](https://github.com/estevanhernandez-stack-ed/rororo-mac/blob/main/SECURITY.md)
 ```
 
@@ -134,7 +134,7 @@ fixed in {RELEASE_TAG} on {RELEASE_DATE}.
 
 ## After publication — update the threat model
 
-Within a week of publishing the advisory, append a row to the relevant STRIDE section in [`docs/generated/threat-model.md`](../../generated/threat-model.md) marking the vector as **Mitigated** (or **Partially mitigated**) with a link to the advisory. The threat model is the institutional memory; advisories without corresponding threat-model updates drift out of date.
+Within a week of publishing the advisory, append a row to the relevant STRIDE section in [`docs/security/threat-model.md`](../threat-model.md) marking the vector as **Mitigated** (or **Partially mitigated**) with a link to the advisory. The threat model is the institutional memory; advisories without corresponding threat-model updates drift out of date.
 
 If the advisory revealed a structural gap (not just a single bug), open an ADR in [`docs/decisions/`](../../decisions/) capturing what changed in the design posture as a result.
 
