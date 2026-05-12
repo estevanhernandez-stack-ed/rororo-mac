@@ -108,7 +108,8 @@ public final class MultiInstanceCoordinator {
                     request.url,
                     enabled: request.enabled,
                     semaphoreName: request.semaphoreName,
-                    displayLabel: request.displayLabel
+                    displayLabel: request.displayLabel,
+                    accountSlug: request.userId
                 )
                 let spawnedPid = await Self.waitForLaunchToSettle(baseline: baseline)
                 if let pid = spawnedPid, let userId = request.userId {
@@ -200,7 +201,7 @@ public final class MultiInstanceCoordinator {
             // before any URL routing) but keeps the interface honest.
             Task.detached(priority: .userInitiated) {
                 let baseline = Self.runningRobloxPIDs()
-                await Self.performLaunch(url, enabled: enabled, semaphoreName: semaphoreName, displayLabel: displayLabel)
+                await Self.performLaunch(url, enabled: enabled, semaphoreName: semaphoreName, displayLabel: displayLabel, accountSlug: userId)
                 let spawnedPid = await Self.waitForLaunchToSettle(baseline: baseline)
                 if let pid = spawnedPid, let userId {
                     await MainActor.run {
@@ -338,7 +339,7 @@ public final class MultiInstanceCoordinator {
 
     // MARK: - Off-main worker (no actor isolation; runs on Task.detached)
 
-    nonisolated private static func performLaunch(_ url: URL, enabled: Bool, semaphoreName: String, displayLabel: String? = nil) async {
+    nonisolated private static func performLaunch(_ url: URL, enabled: Bool, semaphoreName: String, displayLabel: String? = nil, accountSlug: String? = nil) async {
         if !enabled {
             // Multi-instance OFF — open the original Roblox.app with the URL.
             // Without our break, only one Roblox can run; the second click
@@ -371,7 +372,16 @@ public final class MultiInstanceCoordinator {
             //
             // `semaphoreName` comes from RobloxCompatStore so a Roblox
             // rename can be patched without an app release.
-            let copy = try RobloxAppCopier.copyAppForInstance(bundleLabel: displayLabel)
+            // accountSlug = userId from the Launch As path. Stable-per-
+            // account bundle IDs mean TCC grants persist across launches
+            // and RunningAccountTracker can backfill the pid → account
+            // mapping after a cold start. External URL handoffs arrive
+            // with nil → fall back to a per-launch UUID (those launches
+            // re-prompt TCC each time but they're rare).
+            let copy = try RobloxAppCopier.copyAppForInstance(
+                bundleLabel: displayLabel,
+                accountSlug: accountSlug
+            )
             _ = SemaphoreBreaker.breakRobloxSingleton(name: semaphoreName)
             try await openRoblox(at: copy, with: url)
             _ = SemaphoreBreaker.breakRobloxSingleton(name: semaphoreName)

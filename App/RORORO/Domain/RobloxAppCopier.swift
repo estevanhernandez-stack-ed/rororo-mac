@@ -75,12 +75,50 @@ public enum RobloxAppCopier {
         return instances
     }
 
-    /// Build a unique bundle ID for one per-instance copy. The UUID is
-    /// lowercased to match macOS's canonical-id normalization (the system
-    /// folds `com.foo.UUID` and `com.foo.uuid` to the same canonical ID;
-    /// using lowercase keeps the runtime ID and storage paths consistent).
-    public static func makePerInstanceBundleID() -> String {
+    /// Build a per-instance bundle ID. **Pass a stable `accountSlug`
+    /// whenever account context is available** (the normal Launch As
+    /// path passes `account.userId`). Stable bundle IDs:
+    ///
+    ///   - keep macOS's TCC grants attached across launches (local
+    ///     network, camera, mic, etc. prompt once per account, not on
+    ///     every click);
+    ///   - let `RunningAccountTracker` match a per-instance bundle ID
+    ///     back to its Roblox account on cold-start backfill.
+    ///
+    /// `accountSlug == nil` (or empty after slugify) falls back to a
+    /// fresh UUID — used by the rare URL-handoff path where there's no
+    /// account context. That path re-prompts TCC each launch, but it's
+    /// rare enough to be acceptable.
+    public static func makePerInstanceBundleID(accountSlug: String? = nil) -> String {
+        if let accountSlug, !accountSlug.isEmpty {
+            let safe = slugifyForBundleID(accountSlug)
+            if !safe.isEmpty {
+                return "com.626labs.RORORO.instance.uid\(safe)"
+            }
+        }
         return "com.626labs.RORORO.instance.\(UUID().uuidString.lowercased())"
+    }
+
+    /// Lowercase + restrict to `[a-z0-9-]` (the safe subset for reverse-
+    /// DNS bundle ID components). Other characters become `-`; runs of
+    /// `-` collapse; leading/trailing `-` are stripped.
+    private static func slugifyForBundleID(_ raw: String) -> String {
+        let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789-")
+        let lowered = raw.lowercased()
+        let mapped = String(lowered.map { allowed.contains($0) ? $0 : "-" })
+        // Collapse runs of "-" and trim leading/trailing.
+        var collapsed = ""
+        var lastWasDash = false
+        for ch in mapped {
+            if ch == "-" {
+                if !lastWasDash { collapsed.append(ch) }
+                lastWasDash = true
+            } else {
+                collapsed.append(ch)
+                lastWasDash = false
+            }
+        }
+        return collapsed.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
     }
 
     /// Path to the bundled re-sign entitlements file inside RORORO.app
@@ -135,6 +173,7 @@ public enum RobloxAppCopier {
         sourceAppPath: String = robloxAppPath,
         supportDirOverride: URL? = nil,
         bundleLabel: String? = nil,
+        accountSlug: String? = nil,
         signingIdentity: String? = nil,
         entitlementsPath: String? = nil
     ) throws -> URL {
@@ -192,7 +231,7 @@ public enum RobloxAppCopier {
         do {
             try BundleIDRewriter.rewrite(
                 at: destURL,
-                newBundleID: Self.makePerInstanceBundleID(),
+                newBundleID: Self.makePerInstanceBundleID(accountSlug: accountSlug),
                 signingIdentity: identity,
                 entitlementsPath: resolvedEntitlements
             )

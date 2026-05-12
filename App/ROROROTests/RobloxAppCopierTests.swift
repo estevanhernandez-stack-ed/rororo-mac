@@ -167,6 +167,91 @@ final class RobloxAppCopierTests: XCTestCase {
 
     // MARK: - sanitizedBundleLabel
 
+    // MARK: - makePerInstanceBundleID (stable-per-account derivation)
+
+    func testMakePerInstanceBundleID_NilSlug_FallsBackToUUID() {
+        let a = RobloxAppCopier.makePerInstanceBundleID(accountSlug: nil)
+        let b = RobloxAppCopier.makePerInstanceBundleID(accountSlug: nil)
+        XCTAssertNotEqual(a, b, "nil slug must produce a fresh UUID-keyed ID each call")
+        XCTAssertTrue(a.hasPrefix("com.626labs.RORORO.instance."))
+        XCTAssertTrue(b.hasPrefix("com.626labs.RORORO.instance."))
+        XCTAssertFalse(a.contains(".uid"), "UUID fallback shouldn't carry the 'uid' marker")
+    }
+
+    func testMakePerInstanceBundleID_StableSlug_DeterministicAcrossCalls() {
+        let a = RobloxAppCopier.makePerInstanceBundleID(accountSlug: "12345")
+        let b = RobloxAppCopier.makePerInstanceBundleID(accountSlug: "12345")
+        XCTAssertEqual(a, b, "same slug must produce the same bundle ID — TCC + tracker rely on this")
+        XCTAssertEqual(a, "com.626labs.RORORO.instance.uid12345")
+    }
+
+    func testMakePerInstanceBundleID_DifferentSlugs_ProduceDifferentIDs() {
+        let a = RobloxAppCopier.makePerInstanceBundleID(accountSlug: "12345")
+        let b = RobloxAppCopier.makePerInstanceBundleID(accountSlug: "67890")
+        XCTAssertNotEqual(a, b)
+    }
+
+    func testMakePerInstanceBundleID_SlugSanitizesUnsafeChars() {
+        // Spaces, underscores, slashes, capitals — all get folded to
+        // the safe [a-z0-9-] subset for reverse-DNS bundle IDs.
+        let id = RobloxAppCopier.makePerInstanceBundleID(accountSlug: "User 42_Test/Beta")
+        XCTAssertTrue(id.hasPrefix("com.626labs.RORORO.instance.uid"),
+                      "expected uid-prefixed bundle ID, got: \(id)")
+        // No uppercase, no underscores, no slashes, no spaces past the prefix.
+        let suffix = String(id.dropFirst("com.626labs.RORORO.instance.".count))
+        let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789-")
+        for ch in suffix {
+            XCTAssertTrue(allowed.contains(ch),
+                          "suffix \(suffix) contained disallowed char \(ch)")
+        }
+    }
+
+    func testMakePerInstanceBundleID_EmptySlug_FallsBackToUUID() {
+        let id = RobloxAppCopier.makePerInstanceBundleID(accountSlug: "")
+        XCTAssertTrue(id.hasPrefix("com.626labs.RORORO.instance."))
+        XCTAssertFalse(id.contains(".uid"),
+                       "empty-string slug should not produce a uid-keyed ID")
+    }
+
+    func testMakePerInstanceBundleID_AllInvalidChars_FallsBackToUUID() {
+        // If sanitization strips everything (e.g., a slug of only "/!@#"),
+        // we don't want a bare "com.626labs.RORORO.instance.uid" — fall
+        // back to UUID so we still produce a unique ID.
+        let id = RobloxAppCopier.makePerInstanceBundleID(accountSlug: "/!@#")
+        XCTAssertFalse(id.contains(".uid"),
+                       "all-invalid slug should fall back to UUID, got: \(id)")
+        XCTAssertTrue(id.hasPrefix("com.626labs.RORORO.instance."))
+    }
+
+    func testCopyAppForInstance_SameSlug_ProducesSameBundleIDAcrossCopies() throws {
+        // Stable-per-account contract: relaunching the same account
+        // must reuse the same bundle ID so macOS keeps the TCC grants
+        // attached and the cookie jar / preferences plist persist.
+        let first = try RobloxAppCopier.copyAppForInstance(
+            sourceAppPath: fakeAppURL.path,
+            supportDirOverride: tempRoot,
+            accountSlug: "stable-test-12345",
+            signingIdentity: "-",
+            entitlementsPath: entitlementsURL.path
+        )
+        let second = try RobloxAppCopier.copyAppForInstance(
+            sourceAppPath: fakeAppURL.path,
+            supportDirOverride: tempRoot,
+            accountSlug: "stable-test-12345",
+            signingIdentity: "-",
+            entitlementsPath: entitlementsURL.path
+        )
+        defer {
+            try? FileManager.default.removeItem(at: first)
+            try? FileManager.default.removeItem(at: second)
+        }
+        XCTAssertEqual(try bundleID(at: first), try bundleID(at: second))
+        XCTAssertEqual(try bundleID(at: first),
+                       "com.626labs.RORORO.instance.uidstable-test-12345")
+    }
+
+    // MARK: - sanitizedBundleLabel
+
     func testSanitizedBundleLabel_PassesThroughCleanNames() {
         XCTAssertEqual(RobloxAppCopier.sanitizedBundleLabel(from: "Estevan"), "Estevan")
         XCTAssertEqual(RobloxAppCopier.sanitizedBundleLabel(from: "Liz Lemon"), "Liz Lemon")
