@@ -123,7 +123,13 @@ struct AutoKeysRecorderV2Sheet: View {
     private var sourcePicker: some View {
         let shareables = viewModel.shareableMacros
         let owns = viewModel.ownMacros
-        if !shareables.isEmpty || owns.count > 1 {
+        // Show whenever there's ≥1 macro to pick from (own or shared) —
+        // Mac UX bar requires primary actions on a visible surface, not
+        // hidden behind right-click. Prior rule (`owns.count > 1`) dead-
+        // ended single-own-macro accounts on the sheet; users had to
+        // discover the row-badge right-click context menu to assign or
+        // clear. See feedback_mac_right_click_is_supplemental memory.
+        if !shareables.isEmpty || !owns.isEmpty {
             VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
                 Text("ACTIVE MACRO")
                     .font(Theme.Font.bodySmall)
