@@ -51,6 +51,45 @@ final class BundleIDRewriterTests: XCTestCase {
         XCTAssertEqual(plist["LSMultipleInstancesProhibited"] as? Bool, false)
     }
 
+    func testRewriteSetsCFBundleDisplayNameWhenProvided() throws {
+        let fixtureApp = try makeFixtureApp(
+            bundleID: "com.example.display-name-test",
+            multipleInstancesProhibited: true
+        )
+
+        try BundleIDRewriter.rewrite(
+            at: fixtureApp,
+            newBundleID: "com.626labs.RORORO.instance.uiddisplay-test",
+            signingIdentity: "-",
+            entitlementsPath: entitlementsURL.path,
+            displayName: "CelCPapa"
+        )
+
+        let plist = try plistDict(at: fixtureApp.appendingPathComponent("Contents/Info.plist"))
+        XCTAssertEqual(plist["CFBundleDisplayName"] as? String, "Roblox · CelCPapa",
+                       "display name should be set so TCC prompts read clearly")
+    }
+
+    func testRewriteDoesNotSetDisplayNameWhenNil() throws {
+        let fixtureApp = try makeFixtureApp(
+            bundleID: "com.example.no-display-name",
+            multipleInstancesProhibited: true
+        )
+        let originalDisplay = try plistDict(at: fixtureApp.appendingPathComponent("Contents/Info.plist"))["CFBundleDisplayName"] as? String
+
+        try BundleIDRewriter.rewrite(
+            at: fixtureApp,
+            newBundleID: "com.626labs.RORORO.instance.uidno-display",
+            signingIdentity: "-",
+            entitlementsPath: entitlementsURL.path,
+            displayName: nil
+        )
+
+        let plistAfter = try plistDict(at: fixtureApp.appendingPathComponent("Contents/Info.plist"))
+        XCTAssertEqual(plistAfter["CFBundleDisplayName"] as? String, originalDisplay,
+                       "nil display name must not write CFBundleDisplayName")
+    }
+
     func testReSignedBundleReportsNewIdentifierToCodesign() throws {
         let fixtureApp = try makeFixtureApp(
             bundleID: "com.example.fixture",

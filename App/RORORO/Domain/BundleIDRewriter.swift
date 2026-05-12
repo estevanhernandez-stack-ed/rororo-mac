@@ -60,14 +60,15 @@ public enum BundleIDRewriter {
         at appURL: URL,
         newBundleID: String,
         signingIdentity: String,
-        entitlementsPath: String
+        entitlementsPath: String,
+        displayName: String? = nil
     ) throws {
         let plistURL = appURL.appendingPathComponent("Contents/Info.plist", isDirectory: false)
-        try editInfoPlist(at: plistURL, newBundleID: newBundleID)
+        try editInfoPlist(at: plistURL, newBundleID: newBundleID, displayName: displayName)
         try resign(appURL: appURL, identity: signingIdentity)
     }
 
-    private static func editInfoPlist(at plistURL: URL, newBundleID: String) throws {
+    private static func editInfoPlist(at plistURL: URL, newBundleID: String, displayName: String?) throws {
         let data: Data
         do {
             data = try Data(contentsOf: plistURL)
@@ -92,6 +93,13 @@ public enum BundleIDRewriter {
 
         plist["CFBundleIdentifier"] = newBundleID
         plist["LSMultipleInstancesProhibited"] = false
+        // Set CFBundleDisplayName so macOS TCC prompts read as
+        // "Roblox · <account>" instead of just the bundle filename.
+        // Clearer to the user that this IS Roblox under a per-account
+        // identity, not some unknown app named after their account.
+        if let displayName, !displayName.isEmpty {
+            plist["CFBundleDisplayName"] = "Roblox · \(displayName)"
+        }
 
         let outData: Data
         do {

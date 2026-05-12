@@ -238,7 +238,8 @@ public enum RobloxAppCopier {
                 at: destURL,
                 newBundleID: Self.makePerInstanceBundleID(accountSlug: accountSlug),
                 signingIdentity: identity,
-                entitlementsPath: resolvedEntitlements
+                entitlementsPath: resolvedEntitlements,
+                displayName: label
             )
         } catch {
             throw CopyError.copyFailed(
