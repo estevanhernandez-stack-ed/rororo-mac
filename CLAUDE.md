@@ -22,6 +22,7 @@ RORORO Mac is the Mac-native multi-Roblox launcher. Sibling to RORORO Windows (C
 - **No `NSEvent` monitors / Sparkle boot in `App.init()`.** Defer to `.onAppear`. The trap: silent loss of mouse-event delivery + dim traffic lights. Documented in macRo's `App/macRo/App.swift` header.
 - **No `CFBundleDocumentTypes` registration.** macRo's regression note explains why (drop-target hijacks the entire main window).
 - **Don't tag `v0.1.0` from Claude.** That's a human-only step after the four bootstrap secrets are uploaded.
+- **Bundle-ID-keyed storage is shared across all running per-instance copies unless bundle IDs differ.** macOS keys cookies (`~/Library/HTTPStorages/<bundle>.binarycookies`), NSUserDefaults (`~/Library/Preferences/<bundle>.plist`), HTTPStorages, and WebKit storage by `CFBundleIdentifier`, not bundle path. Multi-instance isolation requires each per-instance copy to have a unique bundle ID — `BundleIDRewriter` handles this at copy time + re-signs with our chosen identity (ad-hoc `--deep` by default) so amfid accepts the spawn. Don't add a launch path that bypasses `BundleIDRewriter`. Don't reuse a bundle ID across accounts. See ADR 0009.
 
 ## What's where
 

@@ -38,11 +38,36 @@ Adjacent steps: cp -a /Applications/Roblox.app → tmp per-instance copy;
                 roblox-player://.
 
 Sibling implementations using the same technique:
-  - github.com/iigordev/RobloxMultiInstance
-  - github.com/Avaluate/multi-roblox
+  - github.com/iigordev/RobloxMultiInstance  (404 as of May 2026 —
+                                              repo deleted; recorded
+                                              here for historical
+                                              attribution only)
+  - github.com/Avaluate/multi-roblox          (Windows-focused per
+                                              repo readme; relevance
+                                              is the singleton-dodge
+                                              technique, not the
+                                              platform)
 
-All three are unsigned community tools (Go / CLI). RORORO Mac is the
-signed/notarized desktop product expression.
+Mac-native sibling tools that converged on the same architecture (per
+the 2026-05-12 competitive survey at docs/_research-2026-05-12-
+distribution.md):
+  - github.com/JadXV/Nitrogen                 (Electron, actively
+                                              maintained, ad-hoc
+                                              re-sign via curl|bash
+                                              install — proven at
+                                              scale)
+  - github.com/DollarNoob/Raptor-Manager      (Tauri/Rust, MIT,
+                                              notarized parent;
+                                              closest direct analog)
+  - github.com/imeowforcash/celestial-ui      (Tauri/Rust, no re-sign,
+                                              Keychain-backed cookie
+                                              storage)
+
+RORORO Mac differentiates by (a) explicit cookie-isolation root-cause
+naming + ADR (the public web does not contain a correct diagnosis of
+the CFBundleIdentifier→HTTPStorages collision), (b) stable-per-account
+bundle IDs (others use per-launch UUIDs that re-prompt TCC), and
+(c) Hardened Runtime + notarized parent app shipping path.
 
 ----------------------------------------------------------------------
 What's NOT in this product
