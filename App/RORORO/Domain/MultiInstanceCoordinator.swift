@@ -90,6 +90,25 @@ public final class MultiInstanceCoordinator {
             try? RobloxAppCopier.cleanupStaleInstances()
         }
 
+        // Defensive keychain bootstrap. App.swift's .onAppear normally
+        // presents KeychainBootstrapPromptSheet for first-run setup,
+        // but a URL handoff into a fresh install (browser → roblox-player://
+        // landing before the main window appears) could route through
+        // bootIfNeeded before the sheet has a chance to fire. Run the
+        // bootstrap from here too — UserDefaults marker coalesces with
+        // the sheet's invocation, whichever wins, the other no-ops. See
+        // ADR 0010 for the architecture.
+        Task.detached(priority: .userInitiated) {
+            do {
+                try await RororoKeychainBootstrap.ensureIfNeeded()
+            } catch {
+                await MainActor.run {
+                    MultiInstanceState.shared.lastError =
+                        "Keychain bootstrap failed: \(error)"
+                }
+            }
+        }
+
         // Boot the serial launch worker. Single consumer over an
         // AsyncStream — every handleIncomingURL yields a request; the
         // worker processes one at a time and waits for the spawned
