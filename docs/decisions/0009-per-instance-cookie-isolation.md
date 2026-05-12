@@ -143,7 +143,8 @@ Captured in `CLAUDE.md` so future contributors don't bypass `BundleIDRewriter` o
 
 ## Open items
 
-- **Anti-cheat / Hyperion behavior under ad-hoc re-signed Roblox** — Nitrogen's population evidence (thousands of users, no widespread kick reports) is strong but not ours. A ~10-minute play smoke at v0.7.0 release-candidate stage is the prudent confirmation before tagging. Captured in `_followups-cookie-isolation.md` as the v0.7.0 release gate.
+- **Anti-cheat / Hyperion behavior under ad-hoc re-signed Roblox** — Nitrogen's population evidence (thousands of users, no widespread kick reports) is strong but not ours. A ~10-minute play smoke at v0.7.0 release-candidate stage is the prudent confirmation before tagging. Captured in `_followups-cookie-isolation.md` as the v0.7.0 release gate. Combined with ADR 0010's Launch-As smoke (`docs/_keychain-smoke-2026-05-12.md`).
+- **Keychain password prompts on new-account launch** — RESOLVED by [ADR 0010](0010-keychain-prompt-elimination.md). The per-instance cdhash mismatch made every Launch As query Keychain through a re-signed bundle not in the original ACL → password prompt. ADR 0010 ships RORORO.keychain with the items Roblox queries pre-populated under a permissive ACL, so the query never falls through to login.keychain.
 - **The four small UX cleanups** caught during morning smoke (footer "Cancel" label, right-click context-menu unification, picker inheriting-default hint, empty-state copy) are captured in `_followups-cookie-isolation.md` and intentionally deferred to v0.7.1 to keep this release focused on the cookie-isolation work.
 
 ## References
