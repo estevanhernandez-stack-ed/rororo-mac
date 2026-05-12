@@ -72,31 +72,11 @@ final class BundleIDRewriterTests: XCTestCase {
         )
     }
 
-    func testMissingEntitlementsThrowsBeforeTouchingPlist() throws {
-        let fixtureApp = try makeFixtureApp(
-            bundleID: "com.example.untouched",
-            multipleInstancesProhibited: true
-        )
-        let originalPlist = try plistDict(at: fixtureApp.appendingPathComponent("Contents/Info.plist"))
-
-        XCTAssertThrowsError(
-            try BundleIDRewriter.rewrite(
-                at: fixtureApp,
-                newBundleID: "com.626labs.RORORO.instance.should-not-apply",
-                signingIdentity: "-",
-                entitlementsPath: "/tmp/nonexistent-entitlements-\(UUID().uuidString).plist"
-            )
-        ) { error in
-            guard case BundleIDRewriter.RewriteError.entitlementsMissing = error else {
-                return XCTFail("expected entitlementsMissing, got \(error)")
-            }
-        }
-
-        let plistAfter = try plistDict(at: fixtureApp.appendingPathComponent("Contents/Info.plist"))
-        XCTAssertEqual(plistAfter["CFBundleIdentifier"] as? String,
-                       originalPlist["CFBundleIdentifier"] as? String,
-                       "pre-flight failure must not mutate Info.plist")
-    }
+    // testMissingEntitlementsThrowsBeforeTouchingPlist removed — the
+    // Task 4.5 recipe switch dropped the --entitlements codesign arg
+    // (ad-hoc --deep makes the disable-library-validation entitlement
+    // moot). The entitlementsPath parameter is kept on `rewrite` for API
+    // stability but ignored; a missing path is no longer an error.
 
     // MARK: helpers
 

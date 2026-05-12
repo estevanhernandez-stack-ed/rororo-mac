@@ -11,23 +11,28 @@
 // Editing Info.plist invalidates the bundle's cdhash; the re-sign
 // recomputes it so amfid accepts the launch under Hardened Runtime.
 //
-// Re-sign recipe (validated by PoC 2026-05-11, see plan v2):
-//   codesign --force \
-//     --sign <identity> \
-//     --options runtime \
-//     --entitlements <relax-libval.plist> \
-//     <copy.app>
+// Re-sign recipe (Nitrogen-pattern, validated by PoC 2026-05-12):
+//   codesign --force --deep --sign <identity> <copy.app>
 //
-// Three things we deliberately DON'T do:
-//   - --deep: would re-sign embedded helpers and break their Roblox-
-//     team-signed library validation chain.
-//   - Ad-hoc identity by default in production: prior failure mode
-//     (commit 95d72fe). The caller passes the identity string; for
-//     shipped RORORO that's a Developer ID. Tests pass "-" because
-//     library validation isn't enforced for fixture bundles.
-//   - Omit the entitlement: without disable-library-validation, the
-//     re-signed parent (our team) can't load Roblox-team-signed
-//     embedded code under Hardened Runtime.
+// Ad-hoc identity (`-`) is the default — works for end-user distribution
+// without requiring a Developer ID cert in keychain. Confirmed by three
+// production tools (Nitrogen, Raptor-Manager, celestial-ui) shipping ad-
+// hoc re-signing to thousands of users.
+//
+// `--deep` re-signs every embedded binary too. Loses Roblox's Roblox-
+// team signature on inner helpers, but ad-hoc-everywhere means library
+// validation has nothing to enforce (no team mismatch can occur). Drops
+// Hardened Runtime on the re-signed copy — accepted trade for end-user
+// shipping; the cookie-isolation goal doesn't require Hardened Runtime
+// on Roblox's binary specifically.
+//
+// History note: the prior recipe (no --deep, --options runtime, with
+// disable-library-validation entitlement) worked with Developer ID
+// identity but FAILED with ad-hoc identity — codesign bails on unsigned
+// subcomponents (RORORO's ClientAppSettings.json FFlag injection file
+// living under Contents/MacOS/ClientSettings/) when ad-hoc-signing
+// without --deep. Switching to --deep fixes that AND drops the cert
+// dependency for distribution.
 
 import Foundation
 
@@ -44,24 +49,22 @@ public enum BundleIDRewriter {
     /// `LSMultipleInstancesProhibited=false`, and a fresh signature
     /// matching the new cdhash. Idempotent — calling twice with the
     /// same `newBundleID` re-signs the same modified plist twice.
+    ///
+    /// `entitlementsPath` is accepted for API stability but ignored by
+    /// the current ad-hoc `--deep` recipe (the entitlement was useful
+    /// when we tried to preserve Roblox's team signature on inner
+    /// helpers; with `--deep` ad-hoc, library validation has nothing
+    /// to enforce and the entitlement is moot). Kept in the signature
+    /// so callers/tests don't need to change.
     public static func rewrite(
         at appURL: URL,
         newBundleID: String,
         signingIdentity: String,
         entitlementsPath: String
     ) throws {
-        // Pre-flight: entitlements file must exist; codesign fails
-        // cryptically with a "could not parse entitlements" message
-        // if the path is wrong. Check first so the error names the
-        // actual problem and we don't mutate the plist before
-        // discovering we can't re-sign.
-        guard FileManager.default.fileExists(atPath: entitlementsPath) else {
-            throw RewriteError.entitlementsMissing(path: entitlementsPath)
-        }
-
         let plistURL = appURL.appendingPathComponent("Contents/Info.plist", isDirectory: false)
         try editInfoPlist(at: plistURL, newBundleID: newBundleID)
-        try resign(appURL: appURL, identity: signingIdentity, entitlementsPath: entitlementsPath)
+        try resign(appURL: appURL, identity: signingIdentity)
     }
 
     private static func editInfoPlist(at plistURL: URL, newBundleID: String) throws {
@@ -107,14 +110,13 @@ public enum BundleIDRewriter {
         }
     }
 
-    private static func resign(appURL: URL, identity: String, entitlementsPath: String) throws {
+    private static func resign(appURL: URL, identity: String) throws {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
         task.arguments = [
             "--force",
+            "--deep",
             "--sign", identity,
-            "--options", "runtime",
-            "--entitlements", entitlementsPath,
             appURL.path
         ]
         let outPipe = Pipe()

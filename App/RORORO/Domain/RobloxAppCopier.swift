@@ -129,11 +129,16 @@ public enum RobloxAppCopier {
         return Bundle.main.path(forResource: "roblox-resign", ofType: "plist")
     }
 
-    /// Default signing identity for runtime re-sign. Matches the
-    /// `DEVELOPMENT_TEAM` + `CODE_SIGN_IDENTITY` in `App/project.yml` so the
-    /// re-sign uses the same cert that signed the host RORORO.app.
+    /// Default signing identity for runtime re-sign. Ad-hoc (`-`) — works
+    /// on any user's machine without requiring a Developer ID cert in
+    /// keychain. Matches the Nitrogen / Raptor-Manager / celestial-ui
+    /// production pattern (validated Task 4.5 PoC 2026-05-12). The
+    /// `BundleIDRewriter.rewrite` recipe uses `--deep` so library
+    /// validation has nothing to enforce; ad-hoc-everywhere is self-
+    /// consistent. Drops Hardened Runtime on the re-signed copy —
+    /// accepted trade-off for end-user distribution.
     public static func defaultSigningIdentity() -> String {
-        return "Developer ID Application: Estevan Hernandez (82BSR56X5J)"
+        return "-"
     }
 
     /// Copy `/Applications/Roblox.app` into `instances/<uuid>/<label>.app/`,
