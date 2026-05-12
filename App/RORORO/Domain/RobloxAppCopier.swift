@@ -75,23 +75,48 @@ public enum RobloxAppCopier {
         return instances
     }
 
-    /// Copy `/Applications/Roblox.app` into `instances/<uuid>.app/` with
-    /// the original Apple signature INTACT (no Info.plist edits yet) and
-    /// return the copy URL.
+    /// Build a unique bundle ID for one per-instance copy. The UUID is
+    /// lowercased to match macOS's canonical-id normalization (the system
+    /// folds `com.foo.UUID` and `com.foo.uuid` to the same canonical ID;
+    /// using lowercase keeps the runtime ID and storage paths consistent).
+    public static func makePerInstanceBundleID() -> String {
+        return "com.626labs.RORORO.instance.\(UUID().uuidString.lowercased())"
+    }
+
+    /// Path to the bundled re-sign entitlements file inside RORORO.app
+    /// (`Contents/Resources/roblox-resign.plist`). Returns nil if the
+    /// resource is missing — caller throws on nil so production code never
+    /// silently skips the re-sign.
+    public static func defaultEntitlementsPath() -> String? {
+        return Bundle.main.path(forResource: "roblox-resign", ofType: "plist")
+    }
+
+    /// Default signing identity for runtime re-sign. Matches the
+    /// `DEVELOPMENT_TEAM` + `CODE_SIGN_IDENTITY` in `App/project.yml` so the
+    /// re-sign uses the same cert that signed the host RORORO.app.
+    public static func defaultSigningIdentity() -> String {
+        return "Developer ID Application: Estevan Hernandez (82BSR56X5J)"
+    }
+
+    /// Copy `/Applications/Roblox.app` into `instances/<uuid>/<label>.app/`,
+    /// rewrite the copy's `CFBundleIdentifier` to a unique
+    /// `com.626labs.RORORO.instance.<uuid>`, flip
+    /// `LSMultipleInstancesProhibited` to false in the same Info.plist
+    /// pass, and re-sign the outer .app shell so the new cdhash matches.
+    /// Returns the copy URL — ready for `open -n -a` to launch.
     ///
-    /// CRITICAL ORDERING: Info.plist must NOT be modified before the
-    /// caller invokes `open -n -a`. Modifying Info.plist invalidates the
-    /// bundle's cdhash; macOS's amfid then refuses to spawn the process
-    /// (Hardened Runtime fails closed) and the user sees
-    /// "Launchd job spawn failed" (caught at v0.1.3 manual smoke).
+    /// Why the rewrite happens here: macOS keys cookies / NSUserDefaults /
+    /// HTTPStorages / WebKit storage by `CFBundleIdentifier`, not bundle
+    /// path. Per-instance bundle IDs deliver per-instance isolation
+    /// natively (see ADR 0009). The re-sign is required because plist
+    /// edits invalidate the bundle's cdhash; without a fresh signature,
+    /// amfid would refuse the spawn under Hardened Runtime.
     ///
-    /// Caller flow (mirrored from the Insadem Go reference):
-    ///   1. let copy = copyAppForInstance()        // signature intact
+    /// Caller flow:
+    ///   1. let copy = copyAppForInstance()        // rewritten + re-signed
     ///   2. SemaphoreBreaker.breakRobloxSingleton()
-    ///   3. open -n -a <copy> <url>                 // launches now
-    ///   4. setMultipleInstancesProhibition(at: copy, false)
-    ///                                              // post-launch; defensive
-    ///   5. SemaphoreBreaker.breakRobloxSingleton() // race buffer
+    ///   3. open -n -a <copy> <url>                 // launches with new cdhash
+    ///   4. SemaphoreBreaker.breakRobloxSingleton() // race buffer
     /// Sanitize a free-form display string into a filename-safe bundle
     /// label. Forbidden HFS+/APFS character `/` becomes `-`; trims
     /// whitespace; caps length so the Dock doesn't elide the back of
@@ -109,7 +134,9 @@ public enum RobloxAppCopier {
     public static func copyAppForInstance(
         sourceAppPath: String = robloxAppPath,
         supportDirOverride: URL? = nil,
-        bundleLabel: String? = nil
+        bundleLabel: String? = nil,
+        signingIdentity: String? = nil,
+        entitlementsPath: String? = nil
     ) throws -> URL {
         // Validate source. Use directoryExists semantics — `.app` is a directory.
         var isDirectory: ObjCBool = false
@@ -151,20 +178,31 @@ public enum RobloxAppCopier {
         // Strip any inherited quarantine xattr.
         try removeQuarantine(at: destURL)
 
-        return destURL
-    }
+        // Resolve the re-sign inputs. Production callers pass nil and we
+        // fall back to the host RORORO.app's bundled entitlements + our
+        // Developer ID identity; tests inject ad-hoc + a temp entitlements
+        // path because CI keychains don't have the Developer ID cert.
+        let identity = signingIdentity ?? Self.defaultSigningIdentity()
+        guard let resolvedEntitlements = entitlementsPath ?? Self.defaultEntitlementsPath() else {
+            throw CopyError.copyFailed(
+                underlying: "roblox-resign.plist missing from RORORO.app bundle; rebuild may have skipped resources"
+            )
+        }
 
-    /// Flip `LSMultipleInstancesProhibited` on the copy's Info.plist.
-    /// Call AFTER `open -n -a` has been issued — modifying the plist
-    /// before launch invalidates the cdhash and amfid refuses the spawn.
-    /// Defensive housekeeping for any future re-launch of this exact
-    /// copy; in practice each launch creates a fresh copy.
-    public static func setMultipleInstancesProhibitionPostLaunch(
-        at appURL: URL,
-        prohibited: Bool = false
-    ) throws {
-        let plistURL = appURL.appendingPathComponent("Contents/Info.plist", isDirectory: false)
-        try flipMultipleInstancesProhibited(at: plistURL, prohibited: prohibited)
+        do {
+            try BundleIDRewriter.rewrite(
+                at: destURL,
+                newBundleID: Self.makePerInstanceBundleID(),
+                signingIdentity: identity,
+                entitlementsPath: resolvedEntitlements
+            )
+        } catch {
+            throw CopyError.copyFailed(
+                underlying: "bundle ID rewrite / re-sign failed: \(error.localizedDescription)"
+            )
+        }
+
+        return destURL
     }
 
     /// Remove instance copies older than `olderThan` seconds (default 24h).
@@ -206,45 +244,4 @@ public enum RobloxAppCopier {
         task.waitUntilExit()
     }
 
-    private static func flipMultipleInstancesProhibited(at plistURL: URL, prohibited: Bool = false) throws {
-        let data: Data
-        do {
-            data = try Data(contentsOf: plistURL)
-        } catch {
-            throw CopyError.infoPlistReadFailed(underlying: error.localizedDescription)
-        }
-
-        var format: PropertyListSerialization.PropertyListFormat = .xml
-        let plistObject: Any
-        do {
-            plistObject = try PropertyListSerialization.propertyList(
-                from: data,
-                options: .mutableContainersAndLeaves,
-                format: &format
-            )
-        } catch {
-            throw CopyError.infoPlistReadFailed(underlying: error.localizedDescription)
-        }
-        guard var plist = plistObject as? [String: Any] else {
-            throw CopyError.infoPlistReadFailed(underlying: "Info.plist root is not a dictionary")
-        }
-
-        plist["LSMultipleInstancesProhibited"] = prohibited
-
-        let outData: Data
-        do {
-            outData = try PropertyListSerialization.data(
-                fromPropertyList: plist,
-                format: format,
-                options: 0
-            )
-        } catch {
-            throw CopyError.infoPlistWriteFailed(underlying: error.localizedDescription)
-        }
-        do {
-            try outData.write(to: plistURL, options: .atomic)
-        } catch {
-            throw CopyError.infoPlistWriteFailed(underlying: error.localizedDescription)
-        }
-    }
 }

@@ -356,19 +356,16 @@ public final class MultiInstanceCoordinator {
         }
 
         do {
-            // Ordering matches Insadem's working Go reference. Modifying
-            // Info.plist BEFORE the open call invalidates the bundle's
-            // cdhash; macOS amfid then refuses the spawn (Hardened Runtime
-            // fails closed) → "Launchd job spawn failed" (caught at v0.1.3).
-            // Steps:
-            //   1. Copy app (signature intact, plist not yet modified).
+            // Steps (post ADR 0009 — per-instance bundle ID + re-sign):
+            //   1. Copy app + BundleIDRewriter rewrites the plist (unique
+            //      CFBundleIdentifier, LSMultipleInstancesProhibited=false)
+            //      and re-signs the outer shell so the new cdhash matches
+            //      under Hardened Runtime. Performed inside copyAppForInstance.
             //   2. sem_unlink → kernel-level singleton check cleared.
-            //   3. open -n -a → spawn the copy with intact signature; the
-            //      running process snapshots Info.plist into memory.
-            //   4. NOW modify Info.plist (defensive housekeeping for any
-            //      subsequent relaunch of this same copy; doesn't affect
-            //      the already-running process).
-            //   5. sem_unlink again — race buffer if Roblox-on-launch
+            //   3. open -n -a → spawn the re-signed copy. macOS gives the
+            //      new bundle ID its own cookie jar / NSUserDefaults /
+            //      HTTPStorages / WebKit storage automatically.
+            //   4. sem_unlink again — race buffer if Roblox-on-launch
             //      recreated the semaphore between our first sem_unlink
             //      and the process spawn.
             //
@@ -377,7 +374,6 @@ public final class MultiInstanceCoordinator {
             let copy = try RobloxAppCopier.copyAppForInstance(bundleLabel: displayLabel)
             _ = SemaphoreBreaker.breakRobloxSingleton(name: semaphoreName)
             try await openRoblox(at: copy, with: url)
-            try? RobloxAppCopier.setMultipleInstancesProhibitionPostLaunch(at: copy)
             _ = SemaphoreBreaker.breakRobloxSingleton(name: semaphoreName)
             await MainActor.run {
                 MultiInstanceState.shared.instanceCount += 1
@@ -414,7 +410,10 @@ public final class MultiInstanceCoordinator {
         task.standardOutput = outPipe
         task.standardError = errPipe
 
-        NSLog("[RORORO] open -n -a \(appURL.path) \(url.absoluteString)")
+        // Use %@ placeholders — NSLog routes through printf, and Swift's
+        // string interpolation pre-bakes %-sequences (URL-encoded bytes like
+        // %3A / %2F) into the format string where printf then eats them.
+        NSLog("[RORORO] open -n -a %@ %@", appURL.path, url.absoluteString)
 
         try task.run()
         task.waitUntilExit()
@@ -424,7 +423,10 @@ public final class MultiInstanceCoordinator {
         let stdoutText = String(data: outData, encoding: .utf8) ?? ""
         let stderrText = String(data: errData, encoding: .utf8) ?? ""
 
-        NSLog("[RORORO] open exit=\(task.terminationStatus) stdout=\(stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)) stderr=\(stderrText.trimmingCharacters(in: .whitespacesAndNewlines))")
+        NSLog("[RORORO] open exit=%d stdout=%@ stderr=%@",
+              task.terminationStatus,
+              stdoutText.trimmingCharacters(in: .whitespacesAndNewlines),
+              stderrText.trimmingCharacters(in: .whitespacesAndNewlines))
 
         if task.terminationStatus != 0 {
             let detail = stderrText.isEmpty ? stdoutText : stderrText
