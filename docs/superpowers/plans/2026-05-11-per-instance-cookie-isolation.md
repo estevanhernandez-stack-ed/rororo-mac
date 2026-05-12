@@ -116,9 +116,27 @@ This plan can be **built and shipped to Este's local builds in full** regardless
 
 **Modify:**
 - `App/project.yml` — register the new entitlements file as a bundled resource so the runtime can find it
-- `App/RORORO/Domain/RobloxAppCopier.swift` — `copyAppForInstance` calls `BundleIDRewriter.rewrite(at:identity:entitlements:)` after the copy + quarantine strip. The result is a copy with a unique bundle ID, `LSMultipleInstancesProhibited=false` already set, and a valid re-signed cdhash. The previous "modify plist AFTER launch" dance is no longer needed — the re-sign IS the cdhash refresh, so plist edits before launch are safe.
-- `App/RORORO/Domain/MultiInstanceCoordinator.swift` — drop the post-launch `setMultipleInstancesProhibitionPostLaunch` call (now handled in copy). Drop the `/tmp/rororo-last-launch-url.txt` debug dump added during the PoC. **Keep** the `NSLog %@` fix from the same debug pass — it's a real bug fix for URL logging.
+- `App/RORORO/Domain/RobloxAppCopier.swift` — `copyAppForInstance` calls `BundleIDRewriter.rewrite(at:identity:entitlements:)` after the copy + quarantine strip. The result is a copy with a unique bundle ID, `LSMultipleInstancesProhibited=false` already set, and a valid re-signed cdhash. The previous "modify plist AFTER launch" dance is no longer needed — the re-sign IS the cdhash refresh, so plist edits before launch are safe. **Threads `accountSlug` through to `BundleIDRewriter` so the bundle ID is stable per account, not per launch** (post-v2-Round-2 fix — see "Stable-per-account derivation" below).
+- `App/RORORO/Domain/MultiInstanceCoordinator.swift` — drop the post-launch `setMultipleInstancesProhibitionPostLaunch` call (now handled in copy). Drop the `/tmp/rororo-last-launch-url.txt` debug dump added during the PoC. **Keep** the `NSLog %@` fix from the same debug pass — it's a real bug fix for URL logging. **`performLaunch` gains an `accountSlug:` parameter, sourced from `LaunchRequest.userId`** so the launch path can hand a stable identifier to the copier.
+- `App/RORORO/Domain/RunningAccountTracker.swift` — widen the `backfillFromRunningProcesses` prefix filter to recognize both `com.roblox.*` AND `com.626labs.RORORO.instance.*`. Without this widening, re-signed copies are invisible to the tracker, the cycler can't find pids to drive macros against, and the UI shows "no macro assigned" on every Launch As.
 - `CLAUDE.md` — add the bundle-ID rule to the Hard rules section.
+
+### Stable-per-account derivation (post-v2-Round-2)
+
+The v2 plan originally specified per-launch random UUIDs for bundle IDs. Dev-build smoke on 2026-05-12 caught two consequences that forced a Round-2 fix in the same branch:
+
+- **TCC grants are keyed by bundle ID.** A fresh UUID per launch means every Launch As re-prompts for local-network access (and would re-prompt for camera/mic/etc. as Roblox asks for them). Unshippable UX.
+- **`RunningAccountTracker.backfillFromRunningProcesses` filtered apps by `bundleIdentifier.hasPrefix("com.roblox")`**, so re-signed copies were invisible to the tracker → the cycler had no pids to drive macros against → "no macro assigned" on every Launch As, all macros silently inactive.
+
+Both stem from the same root: cookie isolation only needs per-**account** distinction, not per-**launch**. The fix: derive bundle IDs deterministically from a stable account identifier (`account.userId`):
+
+```
+com.626labs.RORORO.instance.uid<slug(userId)>
+```
+
+Slug-ification restricts to `[a-z0-9-]` (the safe reverse-DNS bundle ID subset). nil/empty/all-invalid slug falls back to a UUID — only the rare external-URL-handoff path with no account context lands there.
+
+Side benefit: relaunching the same account reuses the same cookie jar / preferences plist (same bundle ID). Sessions persist across Launch As clicks where prior dev builds gave a fresh empty jar every time.
 
 **Delete:**
 - `tools/spawn-poc/` — Task 0 artifact, no longer needed.
@@ -496,13 +514,24 @@ EOF
 In `RobloxAppCopier`, add:
 
 ```swift
-/// Build a unique bundle ID for one per-instance copy. The UUID lower-
-/// cased matches macOS's canonical-id normalization (LaunchServices
-/// stores `com.foo.UUID` and `com.foo.uuid` as the same ID; we use
-/// lowercase to keep the runtime ID and the on-disk paths consistent).
-public static func makePerInstanceBundleID() -> String {
-    let suffix = UUID().uuidString.lowercased()
-    return "com.626labs.RORORO.instance.\(suffix)"
+/// Build a per-instance bundle ID. **Pass a stable `accountSlug`
+/// whenever account context is available** (the normal Launch As
+/// path passes `account.userId`). Per-launch UUID was rejected after
+/// the v2 dev-build smoke caught two consequences:
+///   - TCC re-prompts every Launch As (grants are bundle-ID-keyed).
+///   - `RunningAccountTracker.backfillFromRunningProcesses` filtered
+///     by the original `com.roblox.*` prefix, missed re-signed bundles
+///     entirely, broke macro tracking.
+/// nil/empty/all-invalid slug falls back to a UUID (rare URL-handoff
+/// path; accepts the TCC re-prompt there).
+public static func makePerInstanceBundleID(accountSlug: String? = nil) -> String {
+    if let accountSlug, !accountSlug.isEmpty {
+        let safe = slugifyForBundleID(accountSlug)
+        if !safe.isEmpty {
+            return "com.626labs.RORORO.instance.uid\(safe)"
+        }
+    }
+    return "com.626labs.RORORO.instance.\(UUID().uuidString.lowercased())"
 }
 
 /// Path to the bundled re-sign entitlements file. `Bundle.main` resolves
