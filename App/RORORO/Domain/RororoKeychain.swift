@@ -88,15 +88,22 @@ public enum RororoKeychain {
     /// list. Preserves all existing entries. Idempotent — re-running
     /// with the same path leaves the list unchanged.
     ///
+    /// Paths are resolved through the system's symlinks before insert
+    /// and compare. `security list-keychains` always returns the
+    /// canonical form (e.g. `/private/var/folders/...`), so a caller
+    /// passing `/var/folders/...` would otherwise see a duplicate
+    /// entry on every re-run.
+    ///
     /// macOS REQUIRES user authorization to modify the search list;
     /// this call is what triggers the one-time password prompt at
     /// first run. Production callers run this on a background queue
     /// with the KeychainBootstrapPromptView visible so the user knows
     /// why the prompt appeared.
     public static func prependToSearchList(keychainPath: URL) throws {
+        let canonical = canonicalPath(for: keychainPath)
         var list = try currentSearchList()
-        list.removeAll { $0 == keychainPath.path }
-        list.insert(keychainPath.path, at: 0)
+        list.removeAll { $0 == canonical }
+        list.insert(canonical, at: 0)
         var args = ["list-keychains", "-d", "user", "-s"]
         args.append(contentsOf: list)
         let result = runSecurity(args)
@@ -111,9 +118,10 @@ public enum RororoKeychain {
     /// test tearDown so test keychains don't accumulate in the search
     /// list across runs. No-op if not in the list.
     public static func removeFromSearchListIfPresent(keychainPath: URL) throws {
+        let canonical = canonicalPath(for: keychainPath)
         let list = try currentSearchList()
-        guard list.contains(keychainPath.path) else { return }
-        let newList = list.filter { $0 != keychainPath.path }
+        guard list.contains(canonical) else { return }
+        let newList = list.filter { $0 != canonical }
         var args = ["list-keychains", "-d", "user", "-s"]
         args.append(contentsOf: newList)
         let result = runSecurity(args)
@@ -122,6 +130,29 @@ public enum RororoKeychain {
                 status: result.status, stderr: result.stderr
             )
         }
+    }
+
+    /// Resolve symlinks in `path` via POSIX `realpath(3)` when the file
+    /// exists. When the file doesn't exist (e.g. tearDown after delete),
+    /// fall back to a manual `/var → /private/var` rewrite since
+    /// macOS-on-Intel + Apple-Silicon both symlink that prefix, and
+    /// `security list-keychains` always returns the canonical form.
+    /// Without this normalization, the contains-check in `prepend` and
+    /// `remove` misses entries because Foundation's URL.resolvingSymlinks-
+    /// InPath() does NOT walk the `/var → /private/var` mount on macOS.
+    static func canonicalPath(for url: URL) -> String {
+        let path = url.path
+        if let resolved = realpath(path, nil) {
+            defer { free(resolved) }
+            return String(cString: resolved)
+        }
+        // realpath returns NULL for non-existent paths; fall back to
+        // the manual rewrite for the only case that matters in tests
+        // (`/var/folders/...` from NSTemporaryDirectory()).
+        if path.hasPrefix("/var/") && !path.hasPrefix("/private/var/") {
+            return "/private" + path
+        }
+        return path
     }
 
     /// Delete the keychain at path. Used by uninstall paths and test

@@ -47,7 +47,7 @@ final class RororoKeychainTests: XCTestCase {
 
         let newList = try RororoKeychain.currentSearchList()
         XCTAssertEqual(
-            newList.first, tempPath.path,
+            newList.first, RororoKeychain.canonicalPath(for: tempPath),
             "freshly added keychain should be first in the search list"
         )
         XCTAssertEqual(
