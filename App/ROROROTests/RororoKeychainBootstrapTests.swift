@@ -12,8 +12,16 @@ final class RororoKeychainBootstrapTests: XCTestCase {
     private var defaults: UserDefaults!
     private let suiteName = "rororo-keychain-bootstrap-tests"
 
-    override func setUp() {
-        super.setUp()
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        // All tests in this class exercise ensureIfNeeded, which calls
+        // prependToSearchList → requires AuthorizationServices UI auth.
+        // Headless CI has no UI to display the prompt; tests would hang.
+        // Local runs (CI env var absent) still cover this path.
+        try XCTSkipIf(
+            ProcessInfo.processInfo.environment["CI"] != nil,
+            "Skipping on headless CI — bootstrap requires AuthorizationServices UI auth"
+        )
         tempPath = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("rororo-bootstrap-test-\(UUID().uuidString).keychain")
         // Fresh defaults suite per test so the marker doesn't leak across.
