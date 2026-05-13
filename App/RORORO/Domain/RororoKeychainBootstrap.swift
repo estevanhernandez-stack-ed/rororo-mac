@@ -113,4 +113,16 @@ public enum RororoKeychainBootstrap {
     ) -> Bool {
         defaults.integer(forKey: versionKey) < currentVersion
     }
+
+    /// Cheap belt-and-suspenders unlock of RORORO.keychain. Call from
+    /// each Roblox-launch path so a slept-Mac session that re-locked
+    /// the keychain doesn't trigger a prompt mid-Launch-As. No-op when
+    /// the keychain is already unlocked. Silent on failure — the worst
+    /// case is the user gets prompted (same as not calling this).
+    public static func ensureUnlocked(
+        keychainPath: URL = RororoKeychain.productionPath
+    ) {
+        guard FileManager.default.fileExists(atPath: keychainPath.path) else { return }
+        try? RororoKeychain.unlock(keychainPath: keychainPath, password: "")
+    }
 }

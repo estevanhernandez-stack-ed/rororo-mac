@@ -30,26 +30,57 @@ public enum RororoKeychain {
         case deleteFailed(status: Int32, stderr: String)
     }
 
-    /// Production keychain path. `~/Library/Keychains/RORORO.keychain`.
-    /// macOS auto-migrates to the `.keychain-db` variant on first unlock;
-    /// the security CLI resolves both forms identically, so callers
-    /// always reference the `.keychain` form here.
+    /// Production keychain path. `~/Library/Keychains/RORORO.keychain-db`.
+    ///
+    /// **Critical:** use the `.keychain-db` form here, not `.keychain`.
+    /// `security create-keychain` auto-creates the `.keychain-db` file
+    /// regardless of which form you pass. But `FileManager.fileExists`
+    /// against the `.keychain` form returns `false` even when the `-db`
+    /// file exists. If the bootstrap's "do I need to create?" check uses
+    /// the `.keychain` form, every app launch will re-create the file —
+    /// wiping any items we already populated. Caught manually 2026-05-12
+    /// during the live Launch-As smoke. The `.keychain-db` form makes
+    /// `fileExists` honest.
     public static var productionPath: URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Keychains/RORORO.keychain")
+            .appendingPathComponent("Library/Keychains/RORORO.keychain-db")
     }
 
-    /// Create the keychain at `keychainPath` with the given password.
-    /// Empty password → auto-unlocking keychain that never prompts for
-    /// unlock again (the pattern Raptor uses for its per-profile
-    /// keychains). Throws if the keychain already exists at the path.
+    /// Create the keychain at `keychainPath` with the given password,
+    /// then immediately set "never lock" settings + unlock it. Empty
+    /// password is the Raptor pattern for auto-unlocking keychains.
+    /// Throws if the keychain already exists at the path.
+    ///
+    /// The set-settings + unlock steps are bundled here because they
+    /// must run BEFORE any item is added — otherwise the new item
+    /// inherits the keychain's default lock-on-sleep / lock-on-idle
+    /// settings and the user sees a "rororo wants to use the keychain"
+    /// prompt the next time any process accesses it (caught manually
+    /// 2026-05-12 during the live Launch-As smoke).
     public static func create(keychainPath: URL, password: String) throws {
-        let result = runSecurity([
+        let createResult = runSecurity([
             "create-keychain", "-p", password, keychainPath.path
         ])
-        if result.status != 0 {
-            throw KeychainCLIError.createFailed(status: result.status, stderr: result.stderr)
+        if createResult.status != 0 {
+            throw KeychainCLIError.createFailed(
+                status: createResult.status, stderr: createResult.stderr
+            )
         }
+        // Settings: -t 0 = never auto-lock by timeout. Omit -l (do NOT lock
+        // on sleep). `set-keychain-settings` with no flags also sets
+        // no-timeout but be explicit so the contract is visible.
+        let settingsResult = runSecurity([
+            "set-keychain-settings", "-t", "0", keychainPath.path
+        ])
+        if settingsResult.status != 0 {
+            throw KeychainCLIError.createFailed(
+                status: settingsResult.status,
+                stderr: "set-keychain-settings: \(settingsResult.stderr)"
+            )
+        }
+        // Unlock immediately so the first item add doesn't trip on a
+        // newly-locked keychain.
+        try unlock(keychainPath: keychainPath, password: password)
     }
 
     /// Unlock the keychain. With an empty-password keychain this is a
