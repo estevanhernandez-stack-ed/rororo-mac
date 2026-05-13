@@ -12,8 +12,20 @@ final class RororoKeychainTests: XCTestCase {
 
     private var tempPath: URL!
 
-    override func setUp() {
-        super.setUp()
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        // Even non-search-list-modifying tests in this class hang on
+        // headless CI — RororoKeychain.create runs `security create-
+        // keychain` + `security set-keychain-settings` + `security
+        // unlock-keychain`, and at least one of those prompts the user
+        // to confirm keychain modification on a fresh CI runner.
+        // Blanket-skip the whole class; opt-in locally via
+        // RORORO_RUN_KEYCHAIN_AUTH_TESTS=1 so the developer accepts
+        // the prompts knowingly.
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["RORORO_RUN_KEYCHAIN_AUTH_TESTS"] != nil,
+            "Opt-in only — set RORORO_RUN_KEYCHAIN_AUTH_TESTS=1 locally to exercise"
+        )
         tempPath = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("rororo-keychain-test-\(UUID().uuidString).keychain")
     }
