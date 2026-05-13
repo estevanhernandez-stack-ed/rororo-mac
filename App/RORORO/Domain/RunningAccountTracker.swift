@@ -94,8 +94,18 @@ public final class RunningAccountTracker {
     /// the count of new matches.
     @discardableResult
     public func backfillFromRunningProcesses() -> Int {
+        // Match BOTH the original `com.roblox.RobloxPlayer` (single-
+        // instance / multi-instance-OFF path) AND our re-signed per-
+        // instance bundle prefix (`com.626labs.RORORO.instance.*` — see
+        // ADR 0009 + RobloxAppCopier.makePerInstanceBundleID). Without
+        // the second prefix, multi-instance launches go untracked and
+        // the cycler/macros can't find their target windows.
         let running = NSWorkspace.shared.runningApplications
-            .filter { $0.bundleIdentifier?.hasPrefix("com.roblox") == true }
+            .filter { app in
+                let id = app.bundleIdentifier ?? ""
+                return id.hasPrefix("com.roblox")
+                    || id.hasPrefix("com.626labs.RORORO.instance.")
+            }
         let accounts = AccountStore.shared.accounts
         var added = 0
         NSLog("[RORORO] backfill: scanning \(running.count) running Roblox processes against \(accounts.count) accounts")

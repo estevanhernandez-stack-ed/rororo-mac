@@ -23,17 +23,32 @@ import SwiftUI
 struct ROROROApp: App {
 
     @State private var checkForUpdatesViewModel: CheckForUpdatesViewModel? = nil
+    @State private var showsKeychainBootstrapSheet = false
 
     var body: some Scene {
         WindowGroup("RORORO") {
             ContentView()
                 .frame(minWidth: 720, minHeight: 480)
+                .sheet(isPresented: $showsKeychainBootstrapSheet) {
+                    KeychainBootstrapPromptSheet(onDone: {
+                        showsKeychainBootstrapSheet = false
+                    })
+                }
                 .onAppear {
                     // Boot the multi-instance coordinator: claims the
                     // `roblox-player://` URL scheme, registers the
                     // willTerminate restore hook, kicks off stale-instance
                     // cleanup. Idempotent.
                     MultiInstanceCoordinator.shared.bootIfNeeded()
+                    // Surface the keychain bootstrap sheet on first run
+                    // per machine. Without RORORO.keychain in the search
+                    // list, every Launch As prompts the user for their
+                    // login password (the per-instance bundle copies have
+                    // unique cdhashes that aren't in the original
+                    // Roblox.app keychain ACL). See ADR 0010.
+                    if RororoKeychainBootstrap.needsOnboarding() {
+                        showsKeychainBootstrapSheet = true
+                    }
                     // Install the menu-bar tray icon. Deferred to .onAppear
                     // (never .init()) per the macRo NSEvent-monitor trap.
                     TrayController.shared.install()

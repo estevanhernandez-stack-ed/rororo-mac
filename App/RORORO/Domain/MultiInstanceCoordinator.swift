@@ -90,6 +90,25 @@ public final class MultiInstanceCoordinator {
             try? RobloxAppCopier.cleanupStaleInstances()
         }
 
+        // Defensive keychain bootstrap. App.swift's .onAppear normally
+        // presents KeychainBootstrapPromptSheet for first-run setup,
+        // but a URL handoff into a fresh install (browser → roblox-player://
+        // landing before the main window appears) could route through
+        // bootIfNeeded before the sheet has a chance to fire. Run the
+        // bootstrap from here too — UserDefaults marker coalesces with
+        // the sheet's invocation, whichever wins, the other no-ops. See
+        // ADR 0010 for the architecture.
+        Task.detached(priority: .userInitiated) {
+            do {
+                try await RororoKeychainBootstrap.ensureIfNeeded()
+            } catch {
+                await MainActor.run {
+                    MultiInstanceState.shared.lastError =
+                        "Keychain bootstrap failed: \(error)"
+                }
+            }
+        }
+
         // Boot the serial launch worker. Single consumer over an
         // AsyncStream — every handleIncomingURL yields a request; the
         // worker processes one at a time and waits for the spawned
@@ -108,7 +127,8 @@ public final class MultiInstanceCoordinator {
                     request.url,
                     enabled: request.enabled,
                     semaphoreName: request.semaphoreName,
-                    displayLabel: request.displayLabel
+                    displayLabel: request.displayLabel,
+                    accountSlug: request.userId
                 )
                 let spawnedPid = await Self.waitForLaunchToSettle(baseline: baseline)
                 if let pid = spawnedPid, let userId = request.userId {
@@ -200,7 +220,7 @@ public final class MultiInstanceCoordinator {
             // before any URL routing) but keeps the interface honest.
             Task.detached(priority: .userInitiated) {
                 let baseline = Self.runningRobloxPIDs()
-                await Self.performLaunch(url, enabled: enabled, semaphoreName: semaphoreName, displayLabel: displayLabel)
+                await Self.performLaunch(url, enabled: enabled, semaphoreName: semaphoreName, displayLabel: displayLabel, accountSlug: userId)
                 let spawnedPid = await Self.waitForLaunchToSettle(baseline: baseline)
                 if let pid = spawnedPid, let userId {
                     await MainActor.run {
@@ -338,7 +358,7 @@ public final class MultiInstanceCoordinator {
 
     // MARK: - Off-main worker (no actor isolation; runs on Task.detached)
 
-    nonisolated private static func performLaunch(_ url: URL, enabled: Bool, semaphoreName: String, displayLabel: String? = nil) async {
+    nonisolated private static func performLaunch(_ url: URL, enabled: Bool, semaphoreName: String, displayLabel: String? = nil, accountSlug: String? = nil) async {
         if !enabled {
             // Multi-instance OFF — open the original Roblox.app with the URL.
             // Without our break, only one Roblox can run; the second click
@@ -356,28 +376,44 @@ public final class MultiInstanceCoordinator {
         }
 
         do {
-            // Ordering matches Insadem's working Go reference. Modifying
-            // Info.plist BEFORE the open call invalidates the bundle's
-            // cdhash; macOS amfid then refuses the spawn (Hardened Runtime
-            // fails closed) → "Launchd job spawn failed" (caught at v0.1.3).
-            // Steps:
-            //   1. Copy app (signature intact, plist not yet modified).
+            // Steps (post ADR 0009 — per-instance bundle ID + re-sign):
+            //   1. Copy app + BundleIDRewriter rewrites the plist (unique
+            //      CFBundleIdentifier, LSMultipleInstancesProhibited=false)
+            //      and re-signs the outer shell so the new cdhash matches
+            //      under Hardened Runtime. Performed inside copyAppForInstance.
             //   2. sem_unlink → kernel-level singleton check cleared.
-            //   3. open -n -a → spawn the copy with intact signature; the
-            //      running process snapshots Info.plist into memory.
-            //   4. NOW modify Info.plist (defensive housekeeping for any
-            //      subsequent relaunch of this same copy; doesn't affect
-            //      the already-running process).
-            //   5. sem_unlink again — race buffer if Roblox-on-launch
+            //   3. open -n -a → spawn the re-signed copy. macOS gives the
+            //      new bundle ID its own cookie jar / NSUserDefaults /
+            //      HTTPStorages / WebKit storage automatically.
+            //   4. sem_unlink again — race buffer if Roblox-on-launch
             //      recreated the semaphore between our first sem_unlink
             //      and the process spawn.
             //
             // `semaphoreName` comes from RobloxCompatStore so a Roblox
             // rename can be patched without an app release.
-            let copy = try RobloxAppCopier.copyAppForInstance(bundleLabel: displayLabel)
+            // accountSlug = userId from the Launch As path. Stable-per-
+            // account bundle IDs mean TCC grants persist across launches
+            // and RunningAccountTracker can backfill the pid → account
+            // mapping after a cold start. External URL handoffs arrive
+            // with nil → fall back to a per-launch UUID (those launches
+            // re-prompt TCC each time but they're rare).
+            let copy = try RobloxAppCopier.copyAppForInstance(
+                bundleLabel: displayLabel,
+                accountSlug: accountSlug
+            )
             _ = SemaphoreBreaker.breakRobloxSingleton(name: semaphoreName)
+            // Roblox deletes our pre-populated SharedROBLOSECURITYForStudio
+            // item from RORORO.keychain during each game-launch flow (sees an
+            // invalid placeholder value and wipes). Without re-planting per
+            // launch, the next Launch As whose cdhash isn't already in login.
+            // keychain's ACL falls through to login.keychain and triggers the
+            // password prompt. Validated 2026-05-13 via securityd log capture.
+            // Sync, idempotent, no-op when already present.
+            RororoKeychainBootstrap.ensureUnlocked()
+            for item in RoblxKeychainProbeList.items {
+                try? RororoKeychainItems.add(item, toKeychainAt: RororoKeychain.productionPath)
+            }
             try await openRoblox(at: copy, with: url)
-            try? RobloxAppCopier.setMultipleInstancesProhibitionPostLaunch(at: copy)
             _ = SemaphoreBreaker.breakRobloxSingleton(name: semaphoreName)
             await MainActor.run {
                 MultiInstanceState.shared.instanceCount += 1
@@ -414,7 +450,10 @@ public final class MultiInstanceCoordinator {
         task.standardOutput = outPipe
         task.standardError = errPipe
 
-        NSLog("[RORORO] open -n -a \(appURL.path) \(url.absoluteString)")
+        // Use %@ placeholders — NSLog routes through printf, and Swift's
+        // string interpolation pre-bakes %-sequences (URL-encoded bytes like
+        // %3A / %2F) into the format string where printf then eats them.
+        NSLog("[RORORO] open -n -a %@ %@", appURL.path, url.absoluteString)
 
         try task.run()
         task.waitUntilExit()
@@ -424,7 +463,10 @@ public final class MultiInstanceCoordinator {
         let stdoutText = String(data: outData, encoding: .utf8) ?? ""
         let stderrText = String(data: errData, encoding: .utf8) ?? ""
 
-        NSLog("[RORORO] open exit=\(task.terminationStatus) stdout=\(stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)) stderr=\(stderrText.trimmingCharacters(in: .whitespacesAndNewlines))")
+        NSLog("[RORORO] open exit=%d stdout=%@ stderr=%@",
+              task.terminationStatus,
+              stdoutText.trimmingCharacters(in: .whitespacesAndNewlines),
+              stderrText.trimmingCharacters(in: .whitespacesAndNewlines))
 
         if task.terminationStatus != 0 {
             let detail = stderrText.isEmpty ? stdoutText : stderrText

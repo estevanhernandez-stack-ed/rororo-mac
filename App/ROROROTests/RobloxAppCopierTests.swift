@@ -10,6 +10,7 @@ final class RobloxAppCopierTests: XCTestCase {
 
     private var tempRoot: URL!
     private var fakeAppURL: URL!
+    private var entitlementsURL: URL!
 
     override func setUp() async throws {
         try await super.setUp()
@@ -22,6 +23,38 @@ final class RobloxAppCopierTests: XCTestCase {
 
         fakeAppURL = tempRoot.appendingPathComponent("FakeRoblox.app", isDirectory: true)
         try buildFakeRobloxApp(at: fakeAppURL, multipleInstancesProhibited: true)
+
+        // Test entitlements file with disable-library-validation. The
+        // production path resolves entitlements via Bundle.main (the host
+        // RORORO.app). Tests override to a temp path to keep the test
+        // self-contained even if the resource fails to bundle in dev
+        // builds. Ad-hoc identity (`-`) avoids requiring a Developer ID
+        // cert in the test runner's keychain.
+        entitlementsURL = tempRoot.appendingPathComponent("test-relax-libval.plist")
+        let entitlementsXML = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>com.apple.security.cs.disable-library-validation</key>
+            <true/>
+        </dict>
+        </plist>
+        """
+        try entitlementsXML.write(to: entitlementsURL, atomically: true, encoding: .utf8)
+    }
+
+    /// Helper — calls copyAppForInstance with the fake source + ad-hoc
+    /// signing + the test entitlements path. Keeps individual tests from
+    /// repeating the same 5 named args every call.
+    private func copyForTest(bundleLabel: String? = nil) throws -> URL {
+        return try RobloxAppCopier.copyAppForInstance(
+            sourceAppPath: fakeAppURL.path,
+            supportDirOverride: tempRoot,
+            bundleLabel: bundleLabel,
+            signingIdentity: "-",
+            entitlementsPath: entitlementsURL.path
+        )
     }
 
     override func tearDown() async throws {
@@ -33,19 +66,17 @@ final class RobloxAppCopierTests: XCTestCase {
 
     // MARK: - copyAppForInstance against fake app
 
-    func testCopyAppForInstance_PreservesOriginalSignatureUntouched() throws {
-        let copy = try RobloxAppCopier.copyAppForInstance(
-            sourceAppPath: fakeAppURL.path,
-            supportDirOverride: tempRoot
-        )
+    func testCopyAppForInstance_RewritesBundleIDAndFlipsMultiInstance() throws {
+        let copy = try copyForTest()
         defer { try? FileManager.default.removeItem(at: copy) }
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: copy.path))
         XCTAssertNotEqual(copy, fakeAppURL, "destination should be a copy, not the source")
 
-        // Info.plist should match source — no modifications at copy time.
-        // Modifying before `open -n -a` would invalidate cdhash; amfid
-        // refuses Hardened Runtime apps with broken signatures.
+        // Info.plist is rewritten in-place by BundleIDRewriter: unique
+        // bundle ID for per-instance storage isolation + multi-instance
+        // flag flipped off. cdhash refreshed by the re-sign in the same
+        // pass — amfid accepts the new signature on launch.
         let plistURL = copy.appendingPathComponent("Contents/Info.plist", isDirectory: false)
         let data = try Data(contentsOf: plistURL)
         let plist = try PropertyListSerialization.propertyList(
@@ -53,27 +84,37 @@ final class RobloxAppCopierTests: XCTestCase {
         ) as? [String: Any]
 
         XCTAssertEqual(
-            plist?["LSMultipleInstancesProhibited"] as? Bool, true,
-            "fixture set this true; copy must preserve until post-launch flip"
+            plist?["LSMultipleInstancesProhibited"] as? Bool, false,
+            "rewrite must flip the multi-instance flag off in the same pass"
         )
-        XCTAssertEqual(plist?["CFBundleIdentifier"] as? String, "com.test.fakeroblox")
+        let rewrittenID = plist?["CFBundleIdentifier"] as? String ?? ""
+        XCTAssertTrue(
+            rewrittenID.hasPrefix("com.626labs.RORORO.instance."),
+            "expected per-instance bundle ID prefix, got: \(rewrittenID)"
+        )
+        XCTAssertNotEqual(rewrittenID, "com.test.fakeroblox",
+                          "rewrite must replace the source bundle ID")
     }
 
-    func testSetMultipleInstancesProhibitionPostLaunch_FlipsValue() throws {
-        let copy = try RobloxAppCopier.copyAppForInstance(
-            sourceAppPath: fakeAppURL.path,
-            supportDirOverride: tempRoot
-        )
-        defer { try? FileManager.default.removeItem(at: copy) }
+    func testCopyAppForInstance_TwoCallsProduceDistinctBundleIDs() throws {
+        let firstCopy = try copyForTest()
+        let secondCopy = try copyForTest()
+        defer {
+            try? FileManager.default.removeItem(at: firstCopy)
+            try? FileManager.default.removeItem(at: secondCopy)
+        }
+        let firstID = try bundleID(at: firstCopy)
+        let secondID = try bundleID(at: secondCopy)
+        XCTAssertNotEqual(firstID, secondID, "each copy must get its own unique bundle ID")
+    }
 
-        try RobloxAppCopier.setMultipleInstancesProhibitionPostLaunch(at: copy, prohibited: false)
-
-        let plistURL = copy.appendingPathComponent("Contents/Info.plist", isDirectory: false)
+    private func bundleID(at appURL: URL) throws -> String {
+        let plistURL = appURL.appendingPathComponent("Contents/Info.plist", isDirectory: false)
         let data = try Data(contentsOf: plistURL)
         let plist = try PropertyListSerialization.propertyList(
             from: data, options: [], format: nil
         ) as? [String: Any]
-        XCTAssertEqual(plist?["LSMultipleInstancesProhibited"] as? Bool, false)
+        return (plist?["CFBundleIdentifier"] as? String) ?? ""
     }
 
     func testCopyAppForInstance_SourceMissing_Throws() {
@@ -81,7 +122,9 @@ final class RobloxAppCopierTests: XCTestCase {
         XCTAssertThrowsError(
             try RobloxAppCopier.copyAppForInstance(
                 sourceAppPath: bogusPath,
-                supportDirOverride: tempRoot
+                supportDirOverride: tempRoot,
+                signingIdentity: "-",
+                entitlementsPath: entitlementsURL.path
             )
         ) { error in
             switch error {
@@ -94,10 +137,7 @@ final class RobloxAppCopierTests: XCTestCase {
     }
 
     func testCopyAppForInstance_LandsUnderInstancesSubdir() throws {
-        let copy = try RobloxAppCopier.copyAppForInstance(
-            sourceAppPath: fakeAppURL.path,
-            supportDirOverride: tempRoot
-        )
+        let copy = try copyForTest()
         defer { try? FileManager.default.removeItem(at: copy) }
 
         XCTAssertTrue(copy.path.contains("/instances/"))
@@ -109,10 +149,7 @@ final class RobloxAppCopierTests: XCTestCase {
         // `instances/<UUID>/<label>.app/`. With no `bundleLabel`
         // argument the label falls back to "Roblox", so the bundle
         // is `Roblox.app` — Dock shows "Roblox" for that instance.
-        let copy = try RobloxAppCopier.copyAppForInstance(
-            sourceAppPath: fakeAppURL.path,
-            supportDirOverride: tempRoot
-        )
+        let copy = try copyForTest()
         defer { try? FileManager.default.removeItem(at: copy.deletingLastPathComponent()) }
 
         XCTAssertEqual(copy.lastPathComponent, "Roblox.app")
@@ -122,14 +159,95 @@ final class RobloxAppCopierTests: XCTestCase {
     func testCopyAppForInstance_NamesBundleAfterPlayerWhenLabelProvided() throws {
         // Player-named bundles surface in the Dock per launch. Caller
         // (RobloxLauncher) passes the launching account's display name.
-        let copy = try RobloxAppCopier.copyAppForInstance(
-            sourceAppPath: fakeAppURL.path,
-            supportDirOverride: tempRoot,
-            bundleLabel: "Estevan"
-        )
+        let copy = try copyForTest(bundleLabel: "Estevan")
         defer { try? FileManager.default.removeItem(at: copy.deletingLastPathComponent()) }
 
         XCTAssertEqual(copy.lastPathComponent, "Estevan.app")
+    }
+
+    // MARK: - sanitizedBundleLabel
+
+    // MARK: - makePerInstanceBundleID (stable-per-account derivation)
+
+    func testMakePerInstanceBundleID_NilSlug_FallsBackToUUID() {
+        let a = RobloxAppCopier.makePerInstanceBundleID(accountSlug: nil)
+        let b = RobloxAppCopier.makePerInstanceBundleID(accountSlug: nil)
+        XCTAssertNotEqual(a, b, "nil slug must produce a fresh UUID-keyed ID each call")
+        XCTAssertTrue(a.hasPrefix("com.626labs.RORORO.instance."))
+        XCTAssertTrue(b.hasPrefix("com.626labs.RORORO.instance."))
+        XCTAssertFalse(a.contains(".uid"), "UUID fallback shouldn't carry the 'uid' marker")
+    }
+
+    func testMakePerInstanceBundleID_StableSlug_DeterministicAcrossCalls() {
+        let a = RobloxAppCopier.makePerInstanceBundleID(accountSlug: "12345")
+        let b = RobloxAppCopier.makePerInstanceBundleID(accountSlug: "12345")
+        XCTAssertEqual(a, b, "same slug must produce the same bundle ID — TCC + tracker rely on this")
+        XCTAssertEqual(a, "com.626labs.RORORO.instance.uid12345")
+    }
+
+    func testMakePerInstanceBundleID_DifferentSlugs_ProduceDifferentIDs() {
+        let a = RobloxAppCopier.makePerInstanceBundleID(accountSlug: "12345")
+        let b = RobloxAppCopier.makePerInstanceBundleID(accountSlug: "67890")
+        XCTAssertNotEqual(a, b)
+    }
+
+    func testMakePerInstanceBundleID_SlugSanitizesUnsafeChars() {
+        // Spaces, underscores, slashes, capitals — all get folded to
+        // the safe [a-z0-9-] subset for reverse-DNS bundle IDs.
+        let id = RobloxAppCopier.makePerInstanceBundleID(accountSlug: "User 42_Test/Beta")
+        XCTAssertTrue(id.hasPrefix("com.626labs.RORORO.instance.uid"),
+                      "expected uid-prefixed bundle ID, got: \(id)")
+        // No uppercase, no underscores, no slashes, no spaces past the prefix.
+        let suffix = String(id.dropFirst("com.626labs.RORORO.instance.".count))
+        let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789-")
+        for ch in suffix {
+            XCTAssertTrue(allowed.contains(ch),
+                          "suffix \(suffix) contained disallowed char \(ch)")
+        }
+    }
+
+    func testMakePerInstanceBundleID_EmptySlug_FallsBackToUUID() {
+        let id = RobloxAppCopier.makePerInstanceBundleID(accountSlug: "")
+        XCTAssertTrue(id.hasPrefix("com.626labs.RORORO.instance."))
+        XCTAssertFalse(id.contains(".uid"),
+                       "empty-string slug should not produce a uid-keyed ID")
+    }
+
+    func testMakePerInstanceBundleID_AllInvalidChars_FallsBackToUUID() {
+        // If sanitization strips everything (e.g., a slug of only "/!@#"),
+        // we don't want a bare "com.626labs.RORORO.instance.uid" — fall
+        // back to UUID so we still produce a unique ID.
+        let id = RobloxAppCopier.makePerInstanceBundleID(accountSlug: "/!@#")
+        XCTAssertFalse(id.contains(".uid"),
+                       "all-invalid slug should fall back to UUID, got: \(id)")
+        XCTAssertTrue(id.hasPrefix("com.626labs.RORORO.instance."))
+    }
+
+    func testCopyAppForInstance_SameSlug_ProducesSameBundleIDAcrossCopies() throws {
+        // Stable-per-account contract: relaunching the same account
+        // must reuse the same bundle ID so macOS keeps the TCC grants
+        // attached and the cookie jar / preferences plist persist.
+        let first = try RobloxAppCopier.copyAppForInstance(
+            sourceAppPath: fakeAppURL.path,
+            supportDirOverride: tempRoot,
+            accountSlug: "stable-test-12345",
+            signingIdentity: "-",
+            entitlementsPath: entitlementsURL.path
+        )
+        let second = try RobloxAppCopier.copyAppForInstance(
+            sourceAppPath: fakeAppURL.path,
+            supportDirOverride: tempRoot,
+            accountSlug: "stable-test-12345",
+            signingIdentity: "-",
+            entitlementsPath: entitlementsURL.path
+        )
+        defer {
+            try? FileManager.default.removeItem(at: first)
+            try? FileManager.default.removeItem(at: second)
+        }
+        XCTAssertEqual(try bundleID(at: first), try bundleID(at: second))
+        XCTAssertEqual(try bundleID(at: first),
+                       "com.626labs.RORORO.instance.uidstable-test-12345")
     }
 
     // MARK: - sanitizedBundleLabel
@@ -158,12 +276,8 @@ final class RobloxAppCopierTests: XCTestCase {
     }
 
     func testCopyAppForInstance_TwoCallsProduceTwoDistinctCopies() throws {
-        let first = try RobloxAppCopier.copyAppForInstance(
-            sourceAppPath: fakeAppURL.path, supportDirOverride: tempRoot
-        )
-        let second = try RobloxAppCopier.copyAppForInstance(
-            sourceAppPath: fakeAppURL.path, supportDirOverride: tempRoot
-        )
+        let first = try copyForTest()
+        let second = try copyForTest()
         defer {
             try? FileManager.default.removeItem(at: first)
             try? FileManager.default.removeItem(at: second)
@@ -176,9 +290,7 @@ final class RobloxAppCopierTests: XCTestCase {
     // MARK: - cleanupStaleInstances
 
     func testCleanupStaleInstances_DeletesOldCopies_KeepsRecent() throws {
-        let copy = try RobloxAppCopier.copyAppForInstance(
-            sourceAppPath: fakeAppURL.path, supportDirOverride: tempRoot
-        )
+        let copy = try copyForTest()
 
         // The cleanup iterates entries directly under instances/, which
         // are now the UUID parent dirs (not the .app bundles themselves).
@@ -211,15 +323,32 @@ final class RobloxAppCopierTests: XCTestCase {
             "Roblox.app not installed; integration test skipped."
         )
 
-        let copy = try RobloxAppCopier.copyAppForInstance(supportDirOverride: tempRoot)
+        // Ad-hoc signing so the test passes on any keychain. End-to-end
+        // launch validation (with the real Developer ID identity) lives
+        // in the manual smoke matrix in the plan, not here.
+        let copy = try RobloxAppCopier.copyAppForInstance(
+            supportDirOverride: tempRoot,
+            signingIdentity: "-",
+            entitlementsPath: entitlementsURL.path
+        )
         defer { try? FileManager.default.removeItem(at: copy) }
 
-        // Copy exists and Info.plist is preserved as-shipped.
-        // Post-launch flip happens in MultiInstanceCoordinator after open -n -a.
         XCTAssertTrue(FileManager.default.fileExists(atPath: copy.path))
-        XCTAssertTrue(FileManager.default.fileExists(
-            atPath: copy.appendingPathComponent("Contents/Info.plist").path
-        ))
+        let plistURL = copy.appendingPathComponent("Contents/Info.plist", isDirectory: false)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: plistURL.path))
+
+        // Real Roblox.app bundle ID becomes our per-instance ID after
+        // rewrite. cdhash is fresh from the re-sign.
+        let data = try Data(contentsOf: plistURL)
+        let plist = try PropertyListSerialization.propertyList(
+            from: data, options: [], format: nil
+        ) as? [String: Any]
+        let rewrittenID = (plist?["CFBundleIdentifier"] as? String) ?? ""
+        XCTAssertTrue(
+            rewrittenID.hasPrefix("com.626labs.RORORO.instance."),
+            "real-Roblox copy must end up with per-instance bundle ID; got: \(rewrittenID)"
+        )
+        XCTAssertEqual(plist?["LSMultipleInstancesProhibited"] as? Bool, false)
     }
 
     // MARK: - Helpers

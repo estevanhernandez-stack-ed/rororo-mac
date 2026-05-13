@@ -169,7 +169,8 @@ For when the kit doesn't cover your specific question:
 - [`templates/acknowledgement.md`](templates/acknowledgement.md) — Day 0-7 reply.
 - [`templates/severity-assessment.md`](templates/severity-assessment.md) — Day 7-14 reply with severity + timeline.
 - [`templates/disclosure-publication.md`](templates/disclosure-publication.md) — Release-day reply + advisory body skeleton.
-- [`../generated/threat-model.md`](../generated/threat-model.md) — STRIDE-shaped threat model.
+- [`threat-model.md`](threat-model.md) — STRIDE-shaped threat model.
+- [`../runbook/runbook.md`](../runbook/runbook.md) — Mac-client operational runbook (failure modes, release procedure, semaphore-rename detection).
 - [`../security-audit.md`](../security-audit.md) — posture statement.
 - [GitHub Advisories](https://github.com/estevanhernandez-stack-ed/rororo-mac/security/advisories) — repo's advisory list (draft + published).
 - [Private Vulnerability Reporting form](https://github.com/estevanhernandez-stack-ed/rororo-mac/security/advisories/new) — the URL to give to researchers asking how to report.

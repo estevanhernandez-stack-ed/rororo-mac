@@ -177,7 +177,7 @@ Within a week of any published advisory, append a one-liner to `docs/decisions/`
 - What was the issue.
 - What was the fix.
 - What does the new mitigation look like in the code (file + line refs).
-- Anything that changed in the threat model — re-run the affected STRIDE row in [`docs/generated/threat-model.md`](../generated/threat-model.md).
+- Anything that changed in the threat model — re-run the affected STRIDE row in [`docs/security/threat-model.md`](threat-model.md).
 
 This is the institutional memory step. Three months from now you won't remember CVE-2026-xxxxx without it.
 
@@ -193,5 +193,5 @@ This is the institutional memory step. Three months from now you won't remember 
 
 - [`SECURITY.md`](../../SECURITY.md) — the public-facing policy this runbook implements.
 - [`docs/security/severity-rubric.md`](severity-rubric.md) — Critical / High / Medium / Low buckets + fix windows.
-- [`docs/generated/threat-model.md`](../generated/threat-model.md) — STRIDE-shaped threat model.
+- [`docs/security/threat-model.md`](threat-model.md) — STRIDE-shaped threat model.
 - [GitHub Security Advisories docs](https://docs.github.com/en/code-security/security-advisories/repository-security-advisories) — official reference for the PVR + advisory flow.

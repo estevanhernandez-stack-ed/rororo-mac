@@ -37,6 +37,15 @@ struct AccountsListView: View {
     /// recorder for that account.
     @State private var pendingAutoKeysRecorderForAccount: Account?
 
+    /// Per ADR 0009 — first Launch As on any account triggers macOS
+    /// TCC prompts under the re-signed per-account bundle ID. Show a
+    /// one-time pre-flight alert so users understand what they'll see.
+    /// Persists via UserDefaults; alert dismisses → flag set → never
+    /// shows again on this machine. nil-coalescing default (false)
+    /// covers users upgrading from v0.6.1 → v0.7.0.
+    @AppStorage("rororo.hasShownTCCPreflightAlert") private var hasShownTCCPreflight: Bool = false
+    @State private var pendingPostPreflightLaunch: (account: Account, target: LaunchTarget, savedServerId: UUID?)?
+
     private struct PendingGroupLaunch: Identifiable {
         let id = UUID()
         let groupName: String
@@ -71,6 +80,26 @@ struct AccountsListView: View {
             Button("OK") { lastLaunchError = nil }
         } message: {
             Text(lastLaunchError ?? "")
+        }
+        .alert(
+            "macOS will ask for permissions per account",
+            isPresented: Binding(
+                get: { pendingPostPreflightLaunch != nil },
+                set: { newValue in if !newValue { pendingPostPreflightLaunch = nil } }
+            ),
+            presenting: pendingPostPreflightLaunch
+        ) { pending in
+            Button("Continue") {
+                hasShownTCCPreflight = true
+                let captured = pending
+                pendingPostPreflightLaunch = nil
+                launch(account: captured.account, target: captured.target, savedServerId: captured.savedServerId)
+            }
+            Button("Cancel", role: .cancel) {
+                pendingPostPreflightLaunch = nil
+            }
+        } message: { _ in
+            Text("RORORO launches each Roblox account under its own identity so accounts can't accidentally share a session. The first time you launch each account, macOS will ask for permissions Roblox normally requests (local network, microphone, etc.). You can decline any you don't use — Roblox plays normally without them. You'll see this message once.")
         }
         .sheet(item: $pendingPickerForAccount) { account in
             LaunchTargetPicker(
@@ -457,6 +486,16 @@ struct AccountsListView: View {
     }
 
     private func launch(account: Account, target: LaunchTarget, savedServerId: UUID?) {
+        // ADR 0009 pre-flight — first Launch As on this machine (any
+        // account) triggers TCC prompts under the re-signed per-account
+        // bundle ID. Show a one-time alert so the prompts aren't a
+        // surprise. The alert's Continue action recursively invokes
+        // launch() with the original args after setting the flag.
+        if !hasShownTCCPreflight {
+            pendingPostPreflightLaunch = (account, target, savedServerId)
+            return
+        }
+
         // Slope B3' part 2 — proactive relogin gate. If we already
         // know the cookie is expired (boot probe or prior launch
         // failure), skip the doomed launch attempt and pop the

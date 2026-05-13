@@ -2,7 +2,7 @@
 
 ## Why
 
-People run multiple Roblox accounts. On Windows, MultiBloxy + several other tools solve this by holding the singleton mutex. On macOS, the same problem is solved by `sem_unlink` + a per-launch app copy — but the only public-source implementations are unsigned Go CLI tools (Insadem, iigordev, Avaluate). No polished, signed/notarized desktop app exists.
+People run multiple Roblox accounts. On Windows, MultiBloxy + several other tools solve this by holding the singleton mutex. On macOS, the same problem is solved by `sem_unlink` + a per-launch app copy. Public-source macOS implementations split into two groups: singleton-break-only CLI tools (Insadem's `multi-roblox-macos` — cookies still collide across instances), and richer UI tools that converged on per-instance bundle-ID rewrite for cookie isolation (Nitrogen, Raptor-Manager, celestial-ui — see `docs/_research-2026-05-12-distribution.md`). No prior public tool has named the root cause of the cookie collision; RORORO Mac is the polished, signed/notarized desktop expression with explicit cookie-isolation guarantees per ADR 0009.
 
 626 Labs ships ROROROblox on Windows. RORORO Mac is the matching Mac-native product.
 

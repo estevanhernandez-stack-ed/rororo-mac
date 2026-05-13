@@ -61,7 +61,7 @@ If 90 days elapse without a fix or an explicit mutually-agreed extension, you're
 - Roblox Corporation's infrastructure, login flows, or API. Report those directly to Roblox.
 - Anti-detection / evasion / injection / patching surfaces. RORORO does not ship any of those by design ([`CLAUDE.md` § Hard rules](CLAUDE.md)).
 - Defending against the user attacking their own Mac. A user with admin can read their own Keychain by typing their password — that is correct behavior.
-- Defending against nation-state adversaries. See [`docs/generated/threat-model.md` § Threat-actor prioritization](docs/generated/threat-model.md).
+- Defending against nation-state adversaries. See [`docs/security/threat-model.md` § Threat-actor prioritization](docs/security/threat-model.md).
 
 ## Safe harbor
 
@@ -84,7 +84,8 @@ If you're unsure whether something falls under safe harbor, email first and ask.
 ## References
 
 - [`docs/security-audit.md`](docs/security-audit.md) — posture statement.
-- [`docs/generated/threat-model.md`](docs/generated/threat-model.md) — STRIDE-shaped threat model.
+- [`docs/security/threat-model.md`](docs/security/threat-model.md) — STRIDE-shaped threat model.
+- [`docs/runbook/runbook.md`](docs/runbook/runbook.md) — Mac-client operational runbook.
 - [`docs/security/severity-rubric.md`](docs/security/severity-rubric.md) — severity buckets + fix windows applied to reports.
 - [`docs/security/disclosure-runbook.md`](docs/security/disclosure-runbook.md) — maintainer-facing operational runbook for the policy on this page.
 - [`docs/security/triage-kit.md`](docs/security/triage-kit.md) — first-hour checklist for when a report lands.

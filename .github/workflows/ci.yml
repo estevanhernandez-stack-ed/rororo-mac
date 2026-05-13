@@ -44,12 +44,25 @@ jobs:
             CODE_SIGNING_ALLOWED=NO
 
       - name: Test (Debug)
+        # The keychain test classes are excluded at the xcodebuild level
+        # because every test in them shells out to /usr/bin/security ops
+        # that require AuthorizationServices UI auth (search-list-modify,
+        # ACL confirmation on `-A` flag). Headless macOS runners have no
+        # UI to display the prompt → tests hang. Local devs exercise them
+        # via `RORORO_RUN_KEYCHAIN_AUTH_TESTS=1 xcodebuild test ...`
+        # (the XCTSkipUnless in setUp keeps the prompt avalanche opt-in).
+        # Using -skip-testing here (vs leaning on XCTSkipUnless alone)
+        # because xcodebuild reports XCTSkip'd tests as failures in the
+        # final summary even when XCTest counts them as skipped.
         run: |
           xcodebuild \
             -project App/RORORO.xcodeproj \
             -scheme RORORO \
             -configuration Debug \
             -destination 'platform=macOS,arch=x86_64' \
+            -skip-testing:ROROROTests/RororoKeychainTests \
+            -skip-testing:ROROROTests/RororoKeychainItemsTests \
+            -skip-testing:ROROROTests/RororoKeychainBootstrapTests \
             test \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
