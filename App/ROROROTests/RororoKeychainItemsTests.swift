@@ -8,8 +8,19 @@ final class RororoKeychainItemsTests: XCTestCase {
 
     private var tempPath: URL!
 
-    override func setUp() {
-        super.setUp()
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        // Every test calls RororoKeychainItems.add, which shells out to
+        // `security add-generic-password -A`. The `-A` flag (allow-any-app
+        // ACL) is security-sensitive and macOS prompts the user the first
+        // time it's set on a fresh keychain. Headless CI has no UI to
+        // accept the prompt → tests hang. Opt-in locally via
+        // RORORO_RUN_KEYCHAIN_AUTH_TESTS=1 so the developer accepts the
+        // prompts knowingly.
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["RORORO_RUN_KEYCHAIN_AUTH_TESTS"] != nil,
+            "Opt-in only — set RORORO_RUN_KEYCHAIN_AUTH_TESTS=1 locally to exercise"
+        )
         tempPath = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("rororo-keychain-items-test-\(UUID().uuidString).keychain")
         try? RororoKeychain.create(keychainPath: tempPath, password: "")
