@@ -40,9 +40,9 @@ final class RororoKeychainTests: XCTestCase {
     }
 
     func testPrependToSearchListPutsKeychainFirst() throws {
-        try XCTSkipIf(
-            ProcessInfo.processInfo.environment["CI"] != nil,
-            "Skipping on headless CI — search-list modification requires AuthorizationServices UI auth"
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["RORORO_RUN_KEYCHAIN_AUTH_TESTS"] != nil,
+            "Opt-in only — set RORORO_RUN_KEYCHAIN_AUTH_TESTS=1 locally to exercise"
         )
         try RororoKeychain.create(keychainPath: tempPath, password: "")
         let priorList = try RororoKeychain.currentSearchList()
@@ -61,9 +61,9 @@ final class RororoKeychainTests: XCTestCase {
     }
 
     func testPrependIsIdempotent() throws {
-        try XCTSkipIf(
-            ProcessInfo.processInfo.environment["CI"] != nil,
-            "Skipping on headless CI — search-list modification requires AuthorizationServices UI auth"
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["RORORO_RUN_KEYCHAIN_AUTH_TESTS"] != nil,
+            "Opt-in only — set RORORO_RUN_KEYCHAIN_AUTH_TESTS=1 locally to exercise"
         )
         try RororoKeychain.create(keychainPath: tempPath, password: "")
         try RororoKeychain.prependToSearchList(keychainPath: tempPath)

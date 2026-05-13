@@ -16,11 +16,14 @@ final class RororoKeychainBootstrapTests: XCTestCase {
         try super.setUpWithError()
         // All tests in this class exercise ensureIfNeeded, which calls
         // prependToSearchList → requires AuthorizationServices UI auth.
-        // Headless CI has no UI to display the prompt; tests would hang.
-        // Local runs (CI env var absent) still cover this path.
-        try XCTSkipIf(
-            ProcessInfo.processInfo.environment["CI"] != nil,
-            "Skipping on headless CI — bootstrap requires AuthorizationServices UI auth"
+        // Headless runners (CI) have no UI to display the prompt; the
+        // tests hang. Skipping by default — opt-in locally by setting
+        // the RORORO_RUN_KEYCHAIN_AUTH_TESTS env var (Scheme → Run →
+        // Arguments → Environment Variables) so the developer accepts
+        // the prompt avalanche knowingly.
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["RORORO_RUN_KEYCHAIN_AUTH_TESTS"] != nil,
+            "Opt-in only — set RORORO_RUN_KEYCHAIN_AUTH_TESTS=1 locally to exercise"
         )
         tempPath = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("rororo-bootstrap-test-\(UUID().uuidString).keychain")
