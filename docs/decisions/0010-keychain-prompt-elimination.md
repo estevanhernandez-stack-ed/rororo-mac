@@ -72,6 +72,45 @@ A rogue local app on macOS already has near-total access to the user's home dire
 
 **Why deferred:** adds a per-release build step (compute parent cdhash, embed in partition list call) without changing the user-visible outcome at v0.7.0 (which is "zero prompts after the one-time onboarding"). The trade-off becomes worth-it only if (a) we learn that Roblox writes real credentials into these keychain items in a future release, or (b) external review of the security posture surfaces concerns about the broad ACL.
 
+## Decision 5 — Re-plant the probe items on every Launch As, not just at bootstrap
+
+**Background:** the original Decision 1 design assumed one-shot population at bootstrap was sufficient — items would live in RORORO.keychain forever, Roblox would read them on each launch, no further write needed. Live smoke on 2026-05-13 invalidated that assumption.
+
+**Discovery via `log stream` capture:** during each Roblox game-launch flow, `RobloxPlayer` opens RORORO.keychain for write and commits **two atomic writes** that net to deleting our pre-populated `SharedROBLOSECURITYForStudio` item:
+
+```
+10:05:11.077 RobloxPlayer: atomicfile created RORORO.keychain-db.sb-...-Msb2Ll
+10:05:11.082 RobloxPlayer: committed Msb2Ll to RORORO.keychain-db
+10:05:11.084 RobloxPlayer: committing (second pass)
+10:05:11.085 RobloxPlayer: committed QSUgzp to RORORO.keychain-db
+```
+
+File size drops 22548 → 20460 bytes — exactly one item removed. `find-generic-password` returns `errSecItemNotFound` after the launch. Roblox presumably reads our placeholder value, decodes it as an invalid cookie, and wipes the entry. The `-A` ACL (allow any app) lets RobloxPlayer perform the delete.
+
+**Failure mode without replant:** first Launch As after bootstrap succeeds (item present → search list wins → no prompt). Roblox then wipes. Every subsequent Launch As whose per-instance cdhash isn't already in login.keychain's ACL falls through to login.keychain → cdhash-locked ACL eval → password prompt. Validated on 2026-05-13 morning smoke: 2 prompts fired across ~5 launches after the first.
+
+**Decision:** in `MultiInstanceCoordinator.performLaunch`, immediately before `openRoblox(at: copy, with: url)`, replant every item in `RoblxKeychainProbeList.items` via `RororoKeychainItems.add`. The call is sync, runs on the launch worker queue (no main-thread block), and is idempotent (find-then-add; tolerates `errSecDuplicateItem`).
+
+```swift
+RororoKeychainBootstrap.ensureUnlocked()
+for item in RoblxKeychainProbeList.items {
+    try? RororoKeychainItems.add(item, toKeychainAt: RororoKeychain.productionPath)
+}
+try await openRoblox(at: copy, with: url)
+```
+
+**Rationale:** the replant is cheap (one find + one add per item, both `/usr/bin/security` shell-outs, <100ms total). It runs sequentially with `openRoblox`, so there is no race: our item lands before Roblox starts reading the keychain. Idempotent: when the item is already present (rare path — only on a launch immediately after another that we didn't see Roblox's wipe of yet), the add is a no-op.
+
+**Verification (2026-05-13 morning smoke):** with the patch in place, 5+ stress-test Launch As calls across multiple per-instance cdhashes, all of which prompted in the prior smoke. Result: **0 prompts, 0 `ObjectAcl REJECTS`** in the securityd log capture. 8 RobloxPlayer commits to RORORO.keychain during the smoke (still deletes our items each launch) — but our replant beats Roblox to the next query every time.
+
+**Consequences:**
+
+- New `MultiInstanceCoordinator.swift` delta: per-launch replant block (10 lines including header comment). No new files, no new tests required — the replant uses already-tested `RororoKeychainItems.add` + `RororoKeychain.unlock`.
+- The bootstrap version-bump growth mechanism (Decision 4) still matters for adding new entries to `RoblxKeychainProbeList`, but the day-to-day "items must be present at launch" guarantee comes from the per-launch replant, not the bootstrap.
+- Bootstrap is now "set up the keychain + search list + plant initial items so the very first launch wins" rather than "plant items once forever." The semantic distinction is small but worth naming.
+
+**CLAUDE.md hard rule update:** the existing rule ("don't bypass `RororoKeychainBootstrap.ensureIfNeeded`") still holds. The new implicit rule: **don't add a launch path that bypasses the `MultiInstanceCoordinator.performLaunch` replant block** — without it, the second Launch As on any uncached cdhash prompts. Documented in the surrounding comment block in the source.
+
 ## Decision 4 — `RoblxKeychainProbeList` is a static array, growth via version bump
 
 **Decision:** The items pre-populated into RORORO.keychain are encoded as a static `[RoroKeychainItem]` array in `RoblxKeychainProbeList.swift`. Adding entries requires (a) editing the array and (b) bumping `RororoKeychainBootstrap.currentVersion`.
@@ -131,7 +170,7 @@ No win.
 
 ## Open items
 
-- **Live smoke completion:** the automated layer is done; the user-driven Launch-As + 10-min play smoke confirms zero-prompt behavior end-to-end. Mark `docs/_followups-cookie-isolation.md` GATING-Task-4.5 + keychain-prompt-elimination as RESOLVED after that lands clean.
+- ~~**Live smoke completion**~~ — **RESOLVED 2026-05-13.** Smoke captured 0 prompts across 5+ Launch As stress test on the patched build. See Decision 5 for the per-launch replant fix that closed the gate.
 - **Per-cdhash hardening (v0.8+):** Decision 3. Promote to v0.7.x if external review surfaces ACL concerns; otherwise own branch, own slope.
 
 ## References

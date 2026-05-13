@@ -402,6 +402,17 @@ public final class MultiInstanceCoordinator {
                 accountSlug: accountSlug
             )
             _ = SemaphoreBreaker.breakRobloxSingleton(name: semaphoreName)
+            // Roblox deletes our pre-populated SharedROBLOSECURITYForStudio
+            // item from RORORO.keychain during each game-launch flow (sees an
+            // invalid placeholder value and wipes). Without re-planting per
+            // launch, the next Launch As whose cdhash isn't already in login.
+            // keychain's ACL falls through to login.keychain and triggers the
+            // password prompt. Validated 2026-05-13 via securityd log capture.
+            // Sync, idempotent, no-op when already present.
+            RororoKeychainBootstrap.ensureUnlocked()
+            for item in RoblxKeychainProbeList.items {
+                try? RororoKeychainItems.add(item, toKeychainAt: RororoKeychain.productionPath)
+            }
             try await openRoblox(at: copy, with: url)
             _ = SemaphoreBreaker.breakRobloxSingleton(name: semaphoreName)
             await MainActor.run {
