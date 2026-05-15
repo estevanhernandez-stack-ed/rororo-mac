@@ -25,7 +25,7 @@ import Foundation
 public enum LowResourceFFlags {
 
     /// The curated bundle. Merged into the user's fflag dictionary at
-    /// launch time when `LaunchSettingsStore.lowResourceMode == true`.
+    /// launch time when the Low-resource preset is active (ADR 0011).
     /// User-set fflags overlay on top of this so explicit overrides win.
     public static let bundle: [String: AnyCodableValue] = [
         // Lighting — voxel is the simplest tech (cheapest CPU/GPU). The
@@ -78,14 +78,4 @@ public enum LowResourceFFlags {
         "FFlagDebugGraphicsPreferMetal": .bool(true),
     ]
 
-    /// Merge `bundle` into `userFlags`. User-set values WIN — they
-    /// overlay on top of the bundle so explicit overrides survive
-    /// enabling Low-resource mode.
-    public static func merged(into userFlags: [String: AnyCodableValue]) -> [String: AnyCodableValue] {
-        var out = bundle
-        for (key, value) in userFlags {
-            out[key] = value
-        }
-        return out
-    }
 }

@@ -26,11 +26,13 @@ public final class LaunchSettingsStore: ObservableObject {
 
     @Published public private(set) var framerateCap: Int?
     @Published public private(set) var fflags: [String: AnyCodableValue]
-    /// When true, the LowResourceFFlags bundle merges into `fflags` at
-    /// launch time (ADR 0006). User-set fflags overlay on top of the
-    /// bundle so explicit overrides win. Hyperion may silently no-op
-    /// some bundle entries — bench actual deltas before trusting.
-    @Published public private(set) var lowResourceMode: Bool
+    /// The active FFlag preset (ADR 0011), or nil for "no preset — only
+    /// the user's `fflags` overrides apply." Replaces the pre-0011
+    /// `lowResourceMode: Bool` toggle. At launch FFlagPresetLibrary
+    /// .effectiveFlags merges the preset's bundle with `fflags`; user
+    /// values win on overlap. Hyperion may silently no-op some bundle
+    /// entries — bench actual deltas before trusting.
+    @Published public private(set) var activePreset: FFlagPresetID?
     /// Cycler loop delay in seconds (Slope C). The pause that the
     /// cycler observes between completing one full pass over all
     /// configured accounts and starting the next. Default `14 * 60`
@@ -120,19 +122,39 @@ public final class LaunchSettingsStore: ObservableObject {
         } else {
             self.defaultMacroBehavior = .skip
         }
-        self.lowResourceMode = defaults.bool(forKey: Keys.lowResourceMode)
+        // Migrate the legacy `lowResourceMode` bool → `activePreset` enum
+        // (ADR 0011). A user who had low-resource mode ON keeps it as
+        // activePreset == .lowResource; the old key is cleared so the
+        // migration runs exactly once. If the new key is already present,
+        // it wins and no migration is needed.
+        if let raw = defaults.string(forKey: Keys.activePreset),
+           let decoded = FFlagPresetID(rawValue: raw) {
+            self.activePreset = decoded
+        } else if defaults.bool(forKey: Keys.lowResourceMode) {
+            self.activePreset = .lowResource
+            defaults.set(FFlagPresetID.lowResource.rawValue, forKey: Keys.activePreset)
+            defaults.removeObject(forKey: Keys.lowResourceMode)
+        } else {
+            self.activePreset = nil
+            defaults.removeObject(forKey: Keys.lowResourceMode)
+        }
         // Clean up any leftover P2.5 launch-size key from prior testing.
         // P2.5 was retracted — StartScreenSize is not the lever Roblox
         // uses for its hardcoded 800x600 player window floor.
         defaults.removeObject(forKey: "rororo.launch.startScreenSize")
     }
 
-    /// Toggle the LowResourceFFlags bundle on/off (ADR 0006). Persisted
-    /// across launches. The bundle merges into the user's fflag dict
-    /// at applyLaunchSettings time — user-set fflags win on overlap.
-    public func setLowResourceMode(_ on: Bool) {
-        lowResourceMode = on
-        defaults.set(on, forKey: Keys.lowResourceMode)
+    /// Set the active FFlag preset (ADR 0011). Persisted across launches.
+    /// At launch FFlagPresetLibrary.effectiveFlags merges the preset's
+    /// bundle with the user's `fflags` overrides — user values win on
+    /// overlap. Pass nil to clear the preset.
+    public func setActivePreset(_ id: FFlagPresetID?) {
+        activePreset = id
+        if let id {
+            defaults.set(id.rawValue, forKey: Keys.activePreset)
+        } else {
+            defaults.removeObject(forKey: Keys.activePreset)
+        }
     }
 
     public func setFramerateCap(_ value: Int?) {
@@ -206,18 +228,20 @@ public final class LaunchSettingsStore: ObservableObject {
     /// launch time without holding a reference to the store on a non-main
     /// actor.
     public func snapshot() -> Snapshot {
-        Snapshot(framerateCap: framerateCap, fflags: fflags, lowResourceMode: lowResourceMode)
+        Snapshot(framerateCap: framerateCap, fflags: fflags, activePreset: activePreset)
     }
 
     public struct Snapshot: Sendable, Equatable {
         public let framerateCap: Int?
         public let fflags: [String: AnyCodableValue]
-        public let lowResourceMode: Bool
+        public let activePreset: FFlagPresetID?
     }
 
     private enum Keys {
         static let framerateCap = "rororo.launch.framerateCap"
         static let fflags = "rororo.launch.fflags"
+        static let activePreset = "rororo.launch.activePreset"
+        // Legacy — read once in `init` for the ADR 0011 migration, then removed.
         static let lowResourceMode = "rororo.launch.lowResourceMode"
         static let autoKeysLoopDelay = "rororo.autoKeys.loopDelay"
         static let autoKeysSafety = "rororo.autoKeys.safety"
