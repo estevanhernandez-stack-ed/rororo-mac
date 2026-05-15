@@ -663,7 +663,8 @@ private struct AccountRow: View {
             }
             .buttonStyle(.plain)
 
-            // Per-account framerate override badge (ADR 0011 ux-polish).
+            // Per-account framerate override badge (see
+            // docs/superpowers/specs/2026-05-14-framerate-override-visibility-design.md).
             // FramerateOverrideDivergence picks the styling: warn pill
             // when the override diverges from the global (the trap), or
             // today's subtle in-button styling when the override matches
