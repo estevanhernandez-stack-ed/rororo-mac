@@ -77,11 +77,76 @@ final class LaunchSettingsStoreTests: XCTestCase {
         let store = LaunchSettingsStore(defaults: defaults)
         store.setFramerateCap(20)
         store.setFFlags(["FFlagDebugGraphicsPreferMetal": .bool(true)])
+        store.setActivePreset(.performance)
 
         let snapshot = store.snapshot()
 
         XCTAssertEqual(snapshot.framerateCap, 20)
         XCTAssertEqual(snapshot.fflags["FFlagDebugGraphicsPreferMetal"], .bool(true))
+        XCTAssertEqual(snapshot.activePreset, .performance)
+    }
+
+    // MARK: - activePreset (ADR 0011)
+
+    func testActivePreset_DefaultsToNil() {
+        let store = LaunchSettingsStore(defaults: defaults)
+        XCTAssertNil(store.activePreset)
+    }
+
+    func testActivePreset_PersistsAcrossInstances() {
+        let store = LaunchSettingsStore(defaults: defaults)
+        store.setActivePreset(.performance)
+
+        let reborn = LaunchSettingsStore(defaults: defaults)
+        XCTAssertEqual(reborn.activePreset, .performance)
+    }
+
+    func testActivePreset_ClearsWhenSetToNil() {
+        let store = LaunchSettingsStore(defaults: defaults)
+        store.setActivePreset(.lowResource)
+        store.setActivePreset(nil)
+
+        let reborn = LaunchSettingsStore(defaults: defaults)
+        XCTAssertNil(reborn.activePreset)
+    }
+
+    // MARK: - migration: legacy lowResourceMode → activePreset
+
+    func testMigration_LegacyLowResourceModeTrue_BecomesLowResourcePreset() {
+        defaults.set(true, forKey: "rororo.launch.lowResourceMode")
+
+        let store = LaunchSettingsStore(defaults: defaults)
+        XCTAssertEqual(store.activePreset, .lowResource)
+    }
+
+    func testMigration_LegacyLowResourceModeTrue_ClearsOldKey() {
+        defaults.set(true, forKey: "rororo.launch.lowResourceMode")
+        _ = LaunchSettingsStore(defaults: defaults)
+        // Old key gone — the migration runs exactly once.
+        XCTAssertNil(defaults.object(forKey: "rororo.launch.lowResourceMode"))
+    }
+
+    func testMigration_LegacyLowResourceModeTrue_PersistsAsPreset() {
+        defaults.set(true, forKey: "rororo.launch.lowResourceMode")
+        _ = LaunchSettingsStore(defaults: defaults)
+
+        // A second instance reads the migrated activePreset key, not the
+        // (now-removed) legacy bool.
+        let reborn = LaunchSettingsStore(defaults: defaults)
+        XCTAssertEqual(reborn.activePreset, .lowResource)
+    }
+
+    func testMigration_LegacyLowResourceModeFalse_BecomesNilPreset() {
+        defaults.set(false, forKey: "rororo.launch.lowResourceMode")
+
+        let store = LaunchSettingsStore(defaults: defaults)
+        XCTAssertNil(store.activePreset)
+    }
+
+    func testMigration_NoLegacyKey_DefaultsToNilPreset() {
+        // Fresh install — neither key set.
+        let store = LaunchSettingsStore(defaults: defaults)
+        XCTAssertNil(store.activePreset)
     }
 
     // MARK: - autoKeysLoopDelay (Slope C)

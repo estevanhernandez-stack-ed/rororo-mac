@@ -131,8 +131,8 @@ public final class RobloxLauncher {
 
     /// Variant for external URL handoffs (`.onOpenURL` → coordinator) where
     /// no account context is available. Applies globals only — global
-    /// framerate cap + global FFlag bundle (low-resource + user-set). Per-
-    /// account overrides can't apply on this path; users wanting them must
+    /// framerate cap + global FFlag set (active preset + user-set
+    /// overrides). Per-account overrides can't apply on this path; users wanting them must
     /// launch via "Launch As" so an account is bound.
     public static func applyGlobalLaunchSettings(snapshot: LaunchSettingsStore.Snapshot) {
         applyLaunchSettings(snapshot: snapshot, effectiveCap: snapshot.framerateCap)
@@ -146,22 +146,23 @@ public final class RobloxLauncher {
                 NSLog("[RORORO] GlobalSettingsWriter failed: \(error)")
             }
         }
-        // Compute the effective fflag set: low-resource bundle (if on)
-        // merged with user-set fflags. User-set values overlay the bundle
-        // so explicit overrides survive enabling Low-resource mode.
-        let effectiveFlags = snapshot.lowResourceMode
-            ? LowResourceFFlags.merged(into: snapshot.fflags)
-            : snapshot.fflags
+        // Compute the effective fflag set: the active preset's bundle
+        // (empty when no preset) merged with user-set fflags. User-set
+        // values overlay the preset so explicit overrides win.
+        let effectiveFlags = FFlagPresetLibrary.effectiveFlags(
+            for: snapshot.activePreset,
+            userOverrides: snapshot.fflags
+        )
         if !effectiveFlags.isEmpty {
             let payload: [String: Any] = effectiveFlags.mapValues { $0.jsonObject }
             do {
                 let outcome = try ClientSettingsWriter.write(flags: payload)
-                if snapshot.lowResourceMode {
-                    NSLog("[RORORO] launch: low-resource mode active (\(effectiveFlags.count) fflags written)")
+                if let preset = snapshot.activePreset {
+                    NSLog("[RORORO] launch: FFlag preset '\(preset.rawValue)' active (\(effectiveFlags.count) fflags written)")
                 }
                 let recorded = LastAppliedFFlagsStore.Snapshot(
                     appliedAt: Date(),
-                    lowResourceMode: snapshot.lowResourceMode,
+                    activePreset: snapshot.activePreset,
                     flags: effectiveFlags,
                     outcome: String(describing: outcome)
                 )

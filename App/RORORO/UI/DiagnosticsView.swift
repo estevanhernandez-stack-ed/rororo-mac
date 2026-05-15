@@ -108,8 +108,8 @@ struct DiagnosticsView: View {
         section("FFlags (last applied)") {
             if let snap = fflagStore.lastSnapshot {
                 row("Applied at", value: formattedTimestamp(snap.appliedAt))
-                row("Low-resource mode", value: snap.lowResourceMode ? "ON" : "OFF",
-                    color: snap.lowResourceMode ? Theme.Color.stateOk : Theme.Color.fg3)
+                row("Active preset", value: presetLabel(snap.activePreset),
+                    color: snap.activePreset == nil ? Theme.Color.fg3 : Theme.Color.stateOk)
                 row("Flags written", value: "\(snap.flags.count)")
                 row("Writer outcome", value: snap.outcome,
                     color: snap.outcome.contains("userHandEdited") ? Theme.Color.stateWarn : Theme.Color.fg1)
@@ -128,11 +128,16 @@ struct DiagnosticsView: View {
                     .font(Theme.Font.bodySmall)
                     .foregroundStyle(Theme.Color.fg3)
             } else {
-                Text("No FFlags written yet. Launch an account with Low-resource mode ON (or any user-set FFlags) and the snapshot lands here.")
+                Text("No FFlags written yet. Launch an account with a preset selected (or any user-set FFlags) and the snapshot lands here.")
                     .font(Theme.Font.bodySmall)
                     .foregroundStyle(Theme.Color.fg3)
             }
         }
+    }
+
+    private func presetLabel(_ id: FFlagPresetID?) -> String {
+        guard let id else { return "None" }
+        return FFlagPresetLibrary.preset(id)?.displayName ?? id.rawValue
     }
 
     private func formattedTimestamp(_ date: Date) -> String {
@@ -221,7 +226,7 @@ struct DiagnosticsView: View {
         lines.append("--- FFlags (last applied) ---")
         if let snap = fflagStore.lastSnapshot {
             lines.append("Applied at: \(formattedTimestamp(snap.appliedAt))")
-            lines.append("Low-resource mode: \(snap.lowResourceMode ? "ON" : "OFF")")
+            lines.append("Active preset: \(presetLabel(snap.activePreset))")
             lines.append("Flags written: \(snap.flags.count)")
             lines.append("Writer outcome: \(snap.outcome)")
             lines.append(prettyJSON(snap.flags))

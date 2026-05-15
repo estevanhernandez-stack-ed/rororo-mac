@@ -2,72 +2,84 @@
      relies on all five fields being present and consistently formatted.
      The header encodes methodology choices so /build doesn't re-ask. -->
 
-# Build Checklist — Window Layout Tool (P1)
+# Build Checklist — FFlag Preset Library + Editor
 
-> **Scope note for `/build`:** This is a *feature* build atop an already-shipped product. The product-level `docs/spec.md` and `docs/prd.md` are background context only — the load-bearing artifact for THIS build is the feature spec at [`docs/superpowers/specs/2026-05-09-window-layout-tool-design.md`](superpowers/specs/2026-05-09-window-layout-tool-design.md) and ADR [`docs/decisions/0005-window-layout-tool.md`](decisions/0005-window-layout-tool.md). When dispatching subagents, pass the feature spec — not the product spec — as the architectural context.
+> **Scope note for `/build`:** This is a *feature* build atop an already-shipped product. The load-bearing artifacts are the implementation plan at [`docs/superpowers/plans/2026-05-14-fflag-preset-library.md`](superpowers/plans/2026-05-14-fflag-preset-library.md) — which carries the **complete code, exact commands, and expected output for every step** — and the design spec at [`docs/superpowers/specs/2026-05-14-fflag-preset-library-design.md`](superpowers/specs/2026-05-14-fflag-preset-library-design.md). This checklist is the trackable surface; the plan is the source of truth. ADR 0011 is written in the final item.
 >
-> Documentation & security review for the product as a whole was completed previously; this checklist's final item (manual acceptance) is the feature's verification gate, not a project-wide doc/security pass.
+> Origin: `/vibe-iterate:competitive` top-ranked gap (`:rate` 21/25). Branch: `feat/fflag-preset-library`.
 
 ## Build Preferences
 
 - **Build mode:** Autonomous
 - **Comprehension checks:** N/A (autonomous mode)
-- **Git:** Commit after each item with conventional-commit style. Subject pattern: `feat(window-layout): [item title]` for production code; `test(window-layout): [item title]` for test-only items. Co-author trailer: `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>`.
-- **Verification:** Yes — checkpoint every 3-4 items. Build → orchestrator runs xcodebuild, reports result. Final manual acceptance is its own item.
-- **Check-in cadence:** N/A (autonomous)
+- **Git:** Commit per item with conventional-commit style, scoped `(fflags)`, exactly as each plan task specifies. Co-author trailer: `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>`. **Tasks 5-7 commit together** as one coordinated `Snapshot`-shape change — never commit a broken build.
+- **Verification:** Yes — checkpoint after items 3, 7, and 10. Orchestrator runs xcodebuild, reports result.
+- **Check-in cadence:** N/A (autonomous); stop immediately to surface anything that deviates from the plan.
 
 ## Checklist
 
-- [x] **1. LayoutMode enum**
-  Spec ref: `superpowers/specs/2026-05-09-window-layout-tool-design.md > §4.1 Component map > Domain Layer`
-  What to build: Create `App/RORORO/Domain/WindowLayout/LayoutMode.swift` exposing a public `LayoutMode: Equatable, Sendable` enum with three cases: `.grid(cols: Int, rows: Int)`, `.autoGrid`, `.shrink(percent: Double)`. Doc-comment each case explaining its semantic. Full code body is in the implementation plan task 1 step 1 (`docs/superpowers/plans/2026-05-09-window-layout-tool.md`).
-  Acceptance: File exists, project compiles after `cd App && xcodegen generate && xcodebuild -project App/RORORO.xcodeproj -scheme RORORO build`.
-  Verify: Run `xcodebuild -project App/RORORO.xcodeproj -scheme RORORO build 2>&1 | tail -5`. Expect `** BUILD SUCCEEDED **`.
+- [ ] **1. FFlagPresetID enum**
+  Spec ref: `superpowers/plans/2026-05-14-fflag-preset-library.md > Task 1`
+  What to build: Create `App/RORORO/Domain/FFlagPresetID.swift` — `public enum FFlagPresetID: String, Codable, CaseIterable, Sendable` with cases `.lowResource`, `.performance`. Create `App/ROROROTests/FFlagPresetIDTests.swift` (3 tests: allCases, Codable round-trip, raw-value stability). Full code in plan Task 1.
+  Acceptance: 3 tests pass.
+  Verify: `xcodegen generate --spec App/project.yml && xcodebuild -project App/RORORO.xcodeproj -scheme RORORO test -destination 'platform=macOS,arch=x86_64' -only-testing:ROROROTests/FFlagPresetIDTests 2>&1 | tail -10`. Expect 3 passed.
 
-- [x] **2. WindowLayoutPlanner — auto-grid math (TDD)**
-  Spec ref: `superpowers/specs/2026-05-09-window-layout-tool-design.md > §4.1 Component map > WindowLayoutPlanner` and `decisions/0005-window-layout-tool.md > Decision 4 — Auto-grid algorithm`.
-  What to build: Create `App/RORORO/Domain/WindowLayout/WindowLayoutPlanner.swift` (pure value type, no AppKit) with `static func plan(mode:pids:visibleRect:currentFrames:) -> [pid_t: CGRect]`. Implement `.autoGrid` and `.grid(cols:rows:)` via row-major fill with `ceil(sqrt(N))` packing. Stub `.shrink` (added in item 4). Create `App/ROROROTests/WindowLayoutPlannerTests.swift` and write the 7 auto-grid tests (N=1, 2, 3, 4, 5, 9, empty, plus visible-rect-origin). Full code in implementation plan task 2.
-  Acceptance: All 7 auto-grid tests pass. Stable userId-sorted ordering (running same plan twice yields identical output). N=0 yields empty plan.
-  Verify: Run `xcodebuild -project App/RORORO.xcodeproj -scheme RORORO test -destination 'platform=macOS,arch=x86_64' -only-testing:ROROROTests/WindowLayoutPlannerTests 2>&1 | tail -10`. Expect 7 tests passed, 0 failed.
+- [ ] **2. PerformanceFFlags curated bundle**
+  Spec ref: `superpowers/plans/2026-05-14-fflag-preset-library.md > Task 2`
+  What to build: Create `App/RORORO/Domain/PerformanceFFlags.swift` — render-only FPS-boost bundle (post-FX off, wind off, grass tamed, telemetry off, Metal pinned; ships untested-at-runtime per ADR 0006 posture). Create `App/ROROROTests/PerformanceFFlagsTests.swift` (4 tests: no physics/network/sim, non-empty, disables post-FX, lighter than low-resource). Full code in plan Task 2.
+  Acceptance: 4 tests pass.
+  Verify: `xcodegen generate --spec App/project.yml && xcodebuild ... test -only-testing:ROROROTests/PerformanceFFlagsTests 2>&1 | tail -10`. Expect 4 passed.
 
-- [x] **3. WindowLayoutPlanner — explicit grid tests**
-  Spec ref: `superpowers/specs/2026-05-09-window-layout-tool-design.md > §7.1 Unit tests > Explicit grid`.
-  What to build: Append 5 explicit-grid tests to `App/ROROROTests/WindowLayoutPlannerTests.swift`: 3×3 with N=5 fills row-major, 1×N row stretches across, N×1 column stacks vertically, 2×2 with N=5 drops the overflow pid, stable-sort determinism. The implementation already covers `.grid` from item 2 — this item is test-only. Full test bodies in implementation plan task 3.
-  Acceptance: All 5 explicit-grid tests pass; 12 total planner tests passing.
-  Verify: Run `xcodebuild ... test -only-testing:ROROROTests/WindowLayoutPlannerTests 2>&1 | tail -10`. Expect 12 tests passed.
+- [ ] **3. FFlagPreset struct + FFlagPresetLibrary registry**
+  Spec ref: `superpowers/plans/2026-05-14-fflag-preset-library.md > Task 3`
+  What to build: Create `App/RORORO/Domain/FFlagPreset.swift` (`Identifiable, Sendable` struct: id, displayName, summary, bundle) and `App/RORORO/Domain/FFlagPresetLibrary.swift` (`all`, `preset(_:)`, `effectiveFlags(for:userOverrides:)` — the single launch-time merge point, user wins on collision). Create `App/ROROROTests/FFlagPresetLibraryTests.swift` (9 tests: registry shape + merge semantics). Full code in plan Task 3.
+  Acceptance: 9 tests pass.
+  Verify: `xcodegen generate --spec App/project.yml && xcodebuild ... test -only-testing:ROROROTests/FFlagPresetLibraryTests 2>&1 | tail -10`. Expect 9 passed. **Checkpoint — report to orchestrator.**
 
-- [x] **4. WindowLayoutPlanner — shrink mode + tests**
-  Spec ref: `decisions/0005-window-layout-tool.md > Decision 5 — Shrink anchor` and `superpowers/specs/2026-05-09-window-layout-tool-design.md > §7.1 Unit tests > Shrink`.
-  What to build: Implement `.shrink(percent:)` in `WindowLayoutPlanner` — anchor on each window's current center, scale width × height by `percent`. Append 5 shrink tests: 50% preserves center (table-driven exact CGRect assertion), 25% quarter-size, 100% no-op, pid without current frame is dropped, multiple windows each preserve own center. Full code in implementation plan task 4.
-  Acceptance: All 5 shrink tests pass; 17 total planner tests passing. Center-anchored math verified against the canonical example (200,100,1280,720) → 50% → (520,280,640,360).
-  Verify: Run `xcodebuild ... test -only-testing:ROROROTests/WindowLayoutPlannerTests 2>&1 | tail -10`. Expect 17 tests passed.
+- [ ] **4. RiskyFFlagPatterns matcher**
+  Spec ref: `superpowers/plans/2026-05-14-fflag-preset-library.md > Task 4`
+  What to build: Create `App/RORORO/Domain/RiskyFFlagPatterns.swift` — `FFlagRiskCategory` enum + `risk(for:)` substring matcher (physics/network/simulation). Create `App/ROROROTests/RiskyFFlagPatternsTests.swift` (7 tests, incl. no-false-positive against shipped bundles). Full code in plan Task 4.
+  Acceptance: 7 tests pass.
+  Verify: `xcodegen generate --spec App/project.yml && xcodebuild ... test -only-testing:ROROROTests/RiskyFFlagPatternsTests 2>&1 | tail -10`. Expect 7 passed.
 
-- [x] **5. AXWindowManager — protocol + DefaultAXWindowManager**
-  Spec ref: `superpowers/specs/2026-05-09-window-layout-tool-design.md > §4.1 Component map > AXWindowManager` and `decisions/0005-window-layout-tool.md > Implementation map > Domain — service`.
-  What to build: Create `App/RORORO/Domain/WindowLayout/AXWindowManager.swift` exposing `AXWindowManager: Sendable` protocol with `mainWindowFrame(pid:) async throws -> CGRect` and `resize(pid:to:) async throws`, plus `AXWindowManagerError` enum (`.notRunning`, `.noMainWindow`, `.axCallFailed`). Concrete `DefaultAXWindowManager` wraps `AXUIElementSetAttributeValue` for `kAXPositionAttribute` + `kAXSizeAttribute` using `AXValueCreate(.cgPoint)` / `AXValueCreate(.cgSize)`. Mirrors the proven `WindowFocuser` pattern (Slope C wave 1). Full code in implementation plan task 5.
-  Acceptance: Protocol + impl compile clean. NSLog line on resize failure includes both pos/size error codes. One-of-two success treated as success (e.g., position-set succeeds even if size-set fails).
-  Verify: Run `cd App && xcodegen generate && cd .. && xcodebuild -project App/RORORO.xcodeproj -scheme RORORO build 2>&1 | tail -5`. Expect `** BUILD SUCCEEDED **`.
+- [ ] **5. LaunchSettingsStore migration — lowResourceMode → activePreset**
+  Spec ref: `superpowers/plans/2026-05-14-fflag-preset-library.md > Task 5`
+  What to build: Modify `App/RORORO/Domain/LaunchSettingsStore.swift` — swap `lowResourceMode: Bool` for `activePreset: FFlagPresetID?`, one-time UserDefaults migration in `init`, `setActivePreset(_:)`, `Snapshot` field swap, `Keys` update. Add 9 test methods + update `testSnapshot_ReflectsCurrentState` in `App/ROROROTests/LaunchSettingsStoreTests.swift`. Full code in plan Task 5. **Stage, do not commit** (coordinated with items 6-7).
+  Acceptance: `LaunchSettingsStoreTests` are correct; project will not link yet (RobloxLauncher/LastAppliedFFlagsStore/DiagnosticsView still reference the old field — fixed in 6, 7, 10). Expected.
+  Verify: `xcodebuild ... test -only-testing:ROROROTests/LaunchSettingsStoreTests 2>&1 | tail -15`. Expect compile error in dependent files only — proceed to item 6.
 
-- [x] **6. WindowLayoutViewModel**
-  Spec ref: `superpowers/specs/2026-05-09-window-layout-tool-design.md > §4.1 Component map > WindowLayoutViewModel` and §5 Data flow §6 Error handling.
-  What to build: Create `App/RORORO/UI/WindowLayoutViewModel.swift` — `@MainActor @Observable` singleton with `applyAutoGrid()`, `applyGrid(cols:rows:)`, `applyShrink(percent:)` async methods. Reads pids from `RunningAccountTracker.shared`, current frames from `AXWindowManager` (only when needed for shrink), visible rect from `NSApp.mainWindow?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame`. Cycler-state guard at the start of `apply(mode:)` (defense-in-depth — the UI also disables menu items). Per-window failures fail-soft (log + continue); whole-batch failure surfaces via `lastError` for an alert. Full code in implementation plan task 6.
-  Acceptance: VM compiles. Cycler-state guard returns early with user-facing error when `AutoKeysCyclerViewModel.shared.state == .running`. Empty pids set returns early with "No RORORO-launched Roblox windows are running."
-  Verify: Run `xcodebuild ... build 2>&1 | tail -5`. Expect `** BUILD SUCCEEDED **`.
+- [ ] **6. LastAppliedFFlagsStore.Snapshot — swap to activePreset**
+  Spec ref: `superpowers/plans/2026-05-14-fflag-preset-library.md > Task 6`
+  What to build: Modify `App/RORORO/Domain/LastAppliedFFlagsStore.swift` — `Snapshot.lowResourceMode: Bool` → `activePreset: FFlagPresetID?` (optional field → tolerant legacy decode). Create `App/ROROROTests/LastAppliedFFlagsStoreTests.swift` (3 tests: round-trip, nil round-trip, legacy-record decode). Full code in plan Task 6. **Stage, do not commit.**
+  Acceptance: New test file correct; build still red on RobloxLauncher/DiagnosticsView. Expected.
+  Verify: `xcodegen generate --spec App/project.yml && xcodebuild ... test -only-testing:ROROROTests/LastAppliedFFlagsStoreTests 2>&1 | tail -15`. Proceed to item 7.
 
-- [x] **7. WindowLayoutToolbarView**
-  Spec ref: `superpowers/specs/2026-05-09-window-layout-tool-design.md > §4.1 Component map > WindowLayoutToolbarView` and `decisions/0005-window-layout-tool.md > §3 Decision (placement and shape, implicit in Implementation map)`.
-  What to build: Create `App/RORORO/UI/WindowLayoutToolbarView.swift` — SwiftUI `Menu` with `Label("Layout", systemImage: "rectangle.3.offgrid")`. Tile submenu enabled with 5 items (Auto-grid / 2×2 / 3×3 / Row (1×N) / Column (N×1)) — Row/Column compute N from `RunningAccountTracker.shared.pidsByUserId.count`. Shrink submenu present with 4 items, all `.disabled(true)` and "Coming soon" tooltip (P2 placeholders). "Custom Size…" item also disabled. Cycler-state reactive disable on every Tile button via `cyclerIsRunning` computed property reading `AutoKeysCyclerViewModel.shared.state`. Alert binding wired to `vm.lastError` with "Open Settings" action when error mentions "Accessibility". Use `Theme.Color.fg2` for the label foreground. Full code in implementation plan task 7.
-  Acceptance: View compiles. Tile items disabled when cycler is `.running`; enabled otherwise. Shrink + Custom items disabled with helpful tooltips. Alert presents `vm.lastError` and clears it on dismiss.
-  Verify: Run `xcodebuild ... build 2>&1 | tail -5`. Expect `** BUILD SUCCEEDED **`.
+- [ ] **7. RobloxLauncher.applyLaunchSettings — route through FFlagPresetLibrary**
+  Spec ref: `superpowers/plans/2026-05-14-fflag-preset-library.md > Task 7`
+  What to build: Modify `App/RORORO/Domain/RobloxLauncher.swift` (use `FFlagPresetLibrary.effectiveFlags`, record `activePreset`); remove dead `LowResourceFFlags.merged(into:)` from `App/RORORO/Domain/LowResourceFFlags.swift`; trim the four `testMerge_*` from `App/ROROROTests/LowResourceFFlagsTests.swift` (keep bundle-invariant tests). If the build is still red on `DiagnosticsView.swift`, apply item 10's edits now and fold in. Full code in plan Task 7. **Commits items 5-7 (and 10 if folded) as one build-green change.**
+  Acceptance: Project compiles; `LowResourceFFlagsTests`, `FFlagPresetLibraryTests`, `LaunchSettingsStoreTests`, `LastAppliedFFlagsStoreTests` all green.
+  Verify: `xcodegen generate --spec App/project.yml && xcodebuild ... test -only-testing:ROROROTests/LowResourceFFlagsTests -only-testing:ROROROTests/FFlagPresetLibraryTests -only-testing:ROROROTests/LaunchSettingsStoreTests -only-testing:ROROROTests/LastAppliedFFlagsStoreTests 2>&1 | tail -15`. Expect all green. **Checkpoint — report to orchestrator.**
 
-- [x] **8. ContentView wire-in**
-  Spec ref: `decisions/0005-window-layout-tool.md > Implementation map > UI — wiring`.
-  What to build: Modify `App/RORORO/UI/ContentView.swift` — insert `WindowLayoutToolbarView()` into the `ToolbarItemGroup(placement: .primaryAction)` between `multiInstanceToggle` and `CyclerToolbarView()`. One-line insert. After this item the toolbar reads (left → right): Multi-instance toggle · Layout · Cycler · Games · Settings · More.
-  Acceptance: Toolbar order matches the spec's component map. Full test suite passes (no regressions in existing tests).
-  Verify: Run `xcodebuild -project App/RORORO.xcodeproj -scheme RORORO test -destination 'platform=macOS,arch=x86_64' 2>&1 | tail -10`. Expect all existing tests + 17 planner tests passing.
+- [ ] **8. FFlagsSheet editor UI**
+  Spec ref: `superpowers/plans/2026-05-14-fflag-preset-library.md > Task 8`
+  What to build: Create `App/RORORO/UI/FFlagsSheet.swift` — stacked sheet (preset cards + arbitrary key/value override editor with caution badges + inline validation; pure `EditorRow` model with `rowsFromStore`/`storeFromRows`/`parsedValue`/`parseError` statics). Create `App/ROROROTests/FFlagsSheetTests.swift` (10 tests on the pure editor model). Full code in plan Task 8.
+  Acceptance: 10 tests pass.
+  Verify: `xcodegen generate --spec App/project.yml && xcodebuild ... test -only-testing:ROROROTests/FFlagsSheetTests 2>&1 | tail -10`. Expect 10 passed.
 
-- [x] **9. Manual acceptance + dashboard decision log**
-  Spec ref: `superpowers/specs/2026-05-09-window-layout-tool-design.md > §7.2 Integration / manual (P1 acceptance)` (steps 1–7) and `decisions/0005-window-layout-tool.md > Phasing > Phase 1`.
-  What to build: This is a verification-only item — no source code is written. The orchestrator hands the eight acceptance steps to the builder (Este) and waits for confirmation: (1) launch app from Xcode, (2) verify toolbar layout (Multi-instance · Layout · Cycler · Games · Settings · More), (3) verify menu structure with no Roblox windows + alert on tile-with-zero-windows, (4) launch 4 RORORO accounts → Tile → Auto-grid → expect 2×2 fills active screen, (5) verify 3×3 / Row / Column / Auto-grid round trip, (6) verify cycler-state gating (Tile items disabled while cycler is `.running`), (7) verify multi-display behavior (drag RORORO to secondary display, tile on that display), (8) optional: verify TCC re-prompt path. After acceptance, log a 626 dashboard decision via `mcp__626Labs__manage_decisions log` titled "Window Layout Tool ships P1 (tile-only)" capturing: reused Accessibility TCC bucket → no new permission ask, AXWindowManager pattern ports from WindowFocuser, P1 valuable alone / P2 (shrink + custom) additive.
-  Acceptance: All 8 manual steps pass. Dashboard decision logged with bound project ID.
-  Verify: Builder confirms each numbered step in chat ("step 4: 2×2 looks right", etc.). Dashboard decision is searchable via `mcp__626Labs__manage_decisions search` and shows the new entry with this date stamp.
+- [ ] **9. Wire FFlags sheet into SettingsView**
+  Spec ref: `superpowers/plans/2026-05-14-fflag-preset-library.md > Task 9`
+  What to build: Modify `App/RORORO/UI/SettingsView.swift` — remove `lowResourceModeEnabled` state, add `showFFlags` state + `fflagsSummary` computed property, replace the "Low-resource mode" section with an "FFlags" section (button + summary), present `FFlagsSheet` via `.sheet`. Full code in plan Task 9. Sheet-on-sheet is a manual-verification watch-point.
+  Acceptance: `** BUILD SUCCEEDED **`.
+  Verify: `xcodegen generate --spec App/project.yml && xcodebuild -project App/RORORO.xcodeproj -scheme RORORO build -destination 'platform=macOS,arch=x86_64' 2>&1 | tail -5`.
+
+- [ ] **10. Show active preset in DiagnosticsView**
+  Spec ref: `superpowers/plans/2026-05-14-fflag-preset-library.md > Task 10`
+  What to build: Modify `App/RORORO/UI/DiagnosticsView.swift` — add `presetLabel(_:)` helper, replace the "Low-resource mode" row with an "Active preset" row in `fflagsSection`, update the empty-state text and `copyAll()`. (If already folded into item 7's commit, this item is verification + a no-op commit-check.) Full code in plan Task 10.
+  Acceptance: `** BUILD SUCCEEDED **`.
+  Verify: `xcodegen generate --spec App/project.yml && xcodebuild ... build 2>&1 | tail -5`. **Checkpoint — report to orchestrator.**
+
+- [ ] **11. ADR 0011 + full-suite verification**
+  Spec ref: `superpowers/plans/2026-05-14-fflag-preset-library.md > Task 11`
+  What to build: Create `docs/decisions/0011-fflag-preset-library.md` (ADR — 5 decisions, consequences, implementation map). Regenerate project, run the FULL test suite green, commit `docs(fflags): ADR 0011`. Full ADR text in plan Task 11.
+  Acceptance: Full suite green (pre-existing CI-opt-in keychain suites excepted — confirm any failure also fails on `main`). ADR committed.
+  Verify: `xcodegen generate --spec App/project.yml && xcodebuild -project App/RORORO.xcodeproj -scheme RORORO test -destination 'platform=macOS,arch=x86_64' 2>&1 | tail -20`. Expect TEST SUCCEEDED. Hand back to orchestrator for the 626Labs Dashboard decision log + PR.
