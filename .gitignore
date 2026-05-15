@@ -29,6 +29,9 @@ dist/
 .vscode/
 .idea/
 
+# Superpowers visual-companion brainstorm artifacts (local-only)
+.superpowers/
+
 # Secrets — never commit; .env.example is the placeholder template (lands at Phase 6)
 .env
 .env.local

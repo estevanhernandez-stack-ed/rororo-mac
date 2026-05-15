@@ -4,8 +4,8 @@
 // Roblox exits (Heisenbug-avoidance vs AppleBlox's setTimeout race), so
 // post-run inspection of the on-disk artifact is impossible. This store
 // keeps an in-app record so DiagnosticsView can answer "what FFlags did
-// the most recent launch try to apply, and was the low-resource bundle
-// folded in?" — without users running `find` commands.
+// the most recent launch try to apply, and which preset was folded
+// in?" — without users running `find` commands.
 //
 // Persists via UserDefaults so the snapshot survives RORORO restarts.
 // Hyperion may silently no-op individual flags at the engine layer; this
@@ -23,21 +23,27 @@ public final class LastAppliedFFlagsStore {
 
     public struct Snapshot: Codable, Equatable {
         public let appliedAt: Date
-        public let lowResourceMode: Bool
+        /// The FFlag preset active on this launch (ADR 0011), or nil when
+        /// the user launched with only their own overrides. Replaces the
+        /// legacy `lowResourceMode: Bool` — a snapshot persisted before
+        /// ADR 0011 decodes with activePreset == nil (the field is
+        /// optional, so `decodeIfPresent` yields nil and the stale
+        /// `lowResourceMode` key is simply ignored).
+        public let activePreset: FFlagPresetID?
         public let flags: [String: AnyCodableValue]
         /// ClientSettingsWriter outcome string — "createdFresh" /
-        /// "overwroteOurOwn" / "userHandEdited". Lets the user see when
+        /// "overwroteOurOwn" / "stompedUserEdit". Lets the user see when
         /// a hand edit got stomped or preserved.
         public let outcome: String
 
         public init(
             appliedAt: Date,
-            lowResourceMode: Bool,
+            activePreset: FFlagPresetID?,
             flags: [String: AnyCodableValue],
             outcome: String
         ) {
             self.appliedAt = appliedAt
-            self.lowResourceMode = lowResourceMode
+            self.activePreset = activePreset
             self.flags = flags
             self.outcome = outcome
         }

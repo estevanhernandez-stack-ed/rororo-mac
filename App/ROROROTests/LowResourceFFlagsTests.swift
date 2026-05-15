@@ -1,57 +1,11 @@
 // LowResourceFFlagsTests.swift
-// Domain — verifies the merge logic. Bundle contents are documented in
-// ADR 0006; we don't snapshot-test the bundle since it's expected to
-// evolve. We DO test that user-set fflags win on overlap and that the
-// merge doesn't lose entries.
+// Domain — verifies the LowResourceFFlags bundle invariants. The merge
+// logic moved to FFlagPresetLibrary (ADR 0011); see FFlagPresetLibraryTests.
 
 import XCTest
 @testable import RORORO
 
 final class LowResourceFFlagsTests: XCTestCase {
-
-    // MARK: - merge
-
-    func testMerge_EmptyUserFlags_ReturnsBundleAsIs() {
-        let merged = LowResourceFFlags.merged(into: [:])
-        XCTAssertEqual(merged.count, LowResourceFFlags.bundle.count)
-        // Spot-check a known bundle entry survives.
-        XCTAssertEqual(merged["FFlagDisablePostFx"], .bool(true))
-    }
-
-    func testMerge_UserFlagOverridesBundle_UserWins() {
-        // Bundle sets DFIntDebugFRMQualityLevelOverride to 1 (lowest).
-        // User explicitly sets it to 10 (highest). User MUST win.
-        let userFlags: [String: AnyCodableValue] = [
-            "DFIntDebugFRMQualityLevelOverride": .int(10)
-        ]
-        let merged = LowResourceFFlags.merged(into: userFlags)
-        XCTAssertEqual(merged["DFIntDebugFRMQualityLevelOverride"], .int(10))
-    }
-
-    func testMerge_UserFlagNotInBundle_AddedAlongside() {
-        let userFlags: [String: AnyCodableValue] = [
-            "FFlagSomeUserSpecificThing": .bool(true)
-        ]
-        let merged = LowResourceFFlags.merged(into: userFlags)
-        XCTAssertEqual(merged["FFlagSomeUserSpecificThing"], .bool(true))
-        // Bundle entries still present.
-        XCTAssertEqual(merged["FFlagDisablePostFx"], .bool(true))
-        XCTAssertEqual(merged.count, LowResourceFFlags.bundle.count + 1)
-    }
-
-    func testMerge_MultipleUserOverrides_AllWin() {
-        let userFlags: [String: AnyCodableValue] = [
-            "FFlagDisablePostFx": .bool(false),                       // bundle says true → user wins false
-            "DFIntTextureQualityOverride": .int(3),                   // bundle says 1 → user wins 3
-            "FFlagDebugDisableTelemetryV2Stat": .bool(false),         // bundle says true → user wins false
-        ]
-        let merged = LowResourceFFlags.merged(into: userFlags)
-        XCTAssertEqual(merged["FFlagDisablePostFx"], .bool(false))
-        XCTAssertEqual(merged["DFIntTextureQualityOverride"], .int(3))
-        XCTAssertEqual(merged["FFlagDebugDisableTelemetryV2Stat"], .bool(false))
-        // Other bundle entries unchanged.
-        XCTAssertEqual(merged["FIntRenderShadowIntensity"], .int(0))
-    }
 
     // MARK: - bundle invariants
 

@@ -14,13 +14,12 @@ struct SettingsView: View {
     @ObservedObject private var launchSettings = LaunchSettingsStore.shared
     @State private var framerateCapEnabled: Bool
     @State private var framerateCapValue: Int
-    @State private var lowResourceModeEnabled: Bool
+    @State private var showFFlags = false
 
     init() {
         let initialCap = LaunchSettingsStore.shared.framerateCap
         _framerateCapEnabled = State(initialValue: initialCap != nil)
         _framerateCapValue = State(initialValue: initialCap ?? 20)
-        _lowResourceModeEnabled = State(initialValue: LaunchSettingsStore.shared.lowResourceMode)
     }
 
     var body: some View {
@@ -82,14 +81,15 @@ struct SettingsView: View {
                             .foregroundStyle(Theme.Color.fg3)
                     }
 
-                    section("Low-resource mode") {
-                        Toggle("Inject low-resource FFlag bundle at launch", isOn: $lowResourceModeEnabled)
-                            .onChange(of: lowResourceModeEnabled) { _, newValue in
-                                launchSettings.setLowResourceMode(newValue)
-                            }
-                        Text(lowResourceModeEnabled
-                             ? "ON: voxel lighting, post-FX off, no shadows/grass/wind, lowest texture quality, telemetry disabled. Cuts CPU + GPU + RAM for AFK / multi-instance grinding. User-set FFlags overlay on top so explicit overrides win. Hyperion may silently no-op some — bench actual deltas before trusting."
-                             : "Default: Roblox renders at the game's quality settings.")
+                    section("FFlags") {
+                        Button {
+                            showFFlags = true
+                        } label: {
+                            Label("Open FFlags editor…", systemImage: "flag.2.crossed")
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(Theme.Color.productTeal)
+                        Text(fflagsSummary)
                             .font(Theme.Font.bodySmall)
                             .foregroundStyle(Theme.Color.fg3)
                     }
@@ -123,6 +123,25 @@ struct SettingsView: View {
         }
         .frame(minWidth: 480, minHeight: 520, idealHeight: 600)
         .background(Theme.Color.bgPage)
+        .sheet(isPresented: $showFFlags) {
+            FFlagsSheet(isPresented: $showFFlags)
+        }
+    }
+
+    /// One-line state summary for the FFlags Settings row. `launchSettings`
+    /// is already an @ObservedObject, so this recomputes when the preset
+    /// or overrides change.
+    private var fflagsSummary: String {
+        let presetName: String
+        if let id = launchSettings.activePreset,
+           let preset = FFlagPresetLibrary.preset(id) {
+            presetName = preset.displayName
+        } else {
+            presetName = "None"
+        }
+        let count = launchSettings.fflags.count
+        let overrides = count == 1 ? "1 override" : "\(count) overrides"
+        return "Preset: \(presetName) · \(overrides). Global — every Roblox instance, applied at launch."
     }
 
     @ViewBuilder
