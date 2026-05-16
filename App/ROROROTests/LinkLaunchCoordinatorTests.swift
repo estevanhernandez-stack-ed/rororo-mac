@@ -40,6 +40,39 @@ final class LinkLaunchCoordinatorTests: XCTestCase {
         XCTAssertEqual(coord.state, .idle, "State must return to idle after submit.")
     }
 
+    func testRequestChoice_NewerCallEvictsOlder() async {
+        let coord = LinkLaunchCoordinator()
+        let urlA = URL(string: "roblox-player://1+launchmode+play&placeId=A")!
+        let urlB = URL(string: "roblox-player://1+launchmode+play&placeId=B")!
+        let accounts = [
+            makeAccount(userId: "111", username: "AltAcct1"),
+            makeAccount(userId: "222", username: "AltAcct2"),
+        ]
+
+        let taskA = Task { @MainActor in
+            await coord.requestChoice(url: urlA, accounts: accounts)
+        }
+        await waitFor { coord.state != .idle }
+        XCTAssertEqual(coord.state, .choosing(pendingURL: urlA, accounts: accounts))
+
+        let taskB = Task { @MainActor in
+            await coord.requestChoice(url: urlB, accounts: accounts)
+        }
+        // After eviction the state should rebind to B's URL.
+        await waitFor {
+            if case .choosing(let pending, _) = coord.state, pending == urlB { return true }
+            return false
+        }
+
+        coord.submit(userId: "222")
+
+        let resultA = await taskA.value
+        let resultB = await taskB.value
+        XCTAssertNil(resultA, "Older requestChoice must resolve with nil when evicted.")
+        XCTAssertEqual(resultB, "222", "Newer requestChoice must resolve with the submitted userId.")
+        XCTAssertEqual(coord.state, .idle, "State must return to idle after submit.")
+    }
+
     /// Small polling helper — XCTestExpectation feels heavy for observing
     /// an @Published transition that happens within a few microseconds.
     private func waitFor(
