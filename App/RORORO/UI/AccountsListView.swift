@@ -14,6 +14,8 @@ struct AccountsListView: View {
     @Binding var showAddAccount: Bool
     @Binding var showGames: Bool
 
+    @ObservedObject private var launchSettings = LaunchSettingsStore.shared
+
     @State private var inFlightLaunchUserId: String?
     @State private var lastLaunchError: String?
     @State private var pendingPickerForAccount: Account?
@@ -360,6 +362,7 @@ struct AccountsListView: View {
             favorites: favoriteStore.favorites,
             servers: serverStore.servers,
             existingGroups: existingGroups,
+            globalFramerateCap: launchSettings.framerateCap,
             onLaunchPrimary: { launchPrimary(account: account) },
             onPickFavorite: { game in
                 launch(account: account, target: .place(placeId: game.placeId), savedServerId: nil)
@@ -581,6 +584,7 @@ private struct AccountRow: View {
     let favorites: [FavoriteGame]
     let servers: [SavedPrivateServer]
     let existingGroups: [String]
+    let globalFramerateCap: Int?
     let onLaunchPrimary: () -> Void
     let onPickFavorite: (FavoriteGame) -> Void
     let onPickServer: (SavedPrivateServer) -> Void
@@ -659,20 +663,14 @@ private struct AccountRow: View {
             }
             .buttonStyle(.plain)
 
-            // Per-account framerate override badge. Only rendered when
-            // the account has an explicit override — accounts using the
-            // global setting (or with no cap at all) get no badge, so
-            // the row stays clean for users not engaged with per-account
-            // throttling. Renders on the same gradient as the primary
-            // button + chevron, distinguished by mono-micro size.
+            // Per-account framerate override badge (see
+            // docs/superpowers/specs/2026-05-14-framerate-override-visibility-design.md).
+            // FramerateOverrideDivergence picks the styling: warn pill
+            // when the override diverges from the global (the trap), or
+            // today's subtle in-button styling when the override matches
+            // the global or no global is set.
             if let cap = account.framerateCapOverride {
-                Text("\(cap)FPS")
-                    .font(Theme.Font.monoMicro)
-                    .foregroundStyle(Color.white.opacity(0.85))
-                    .tracking(0.5)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 6)
-                    .accessibilityLabel("Per-account framerate cap: \(cap) frames per second")
+                overrideBadge(cap: cap, global: globalFramerateCap)
             }
 
             Menu {
@@ -760,6 +758,47 @@ private struct AccountRow: View {
             RoundedRectangle(cornerRadius: 6)
                 .strokeBorder(Color.black.opacity(0.18), lineWidth: 0.5)
         )
+    }
+
+    /// Per-account framerate override badge. Two visual states driven by
+    /// FramerateOverrideDivergence:
+    ///
+    /// - **Warn pill** (amber background, dark text, ⚠ + cap value) when
+    ///   the override diverges from the global. This is the trap to
+    ///   surface — the user changed the global and the override silently
+    ///   wins on launch.
+    /// - **Subtle in-button text** (today's styling, preserved verbatim)
+    ///   when the override matches the global or no global is set. No
+    ///   nag when there is no real surprise.
+    @ViewBuilder
+    private func overrideBadge(cap: Int, global: Int?) -> some View {
+        if let global, FramerateOverrideDivergence.diverges(override: cap, global: global) {
+            // Warn pill — global is unwrapped here per the divergence rule.
+            HStack(spacing: 4) {
+                Text("⚠")
+                Text("\(cap)")
+            }
+            .font(Theme.Font.monoMicro)
+            .foregroundStyle(Theme.Color.bgPage)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Theme.Color.stateWarn, in: RoundedRectangle(cornerRadius: 4))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .help("Per-account override: \(cap)fps. Global is \(global)fps.")
+            .accessibilityLabel(
+                "Per-account framerate cap override: \(cap) frames per second; differs from global setting"
+            )
+        } else {
+            // Match or no global — keep today's subtle in-button styling.
+            Text("\(cap)FPS")
+                .font(Theme.Font.monoMicro)
+                .foregroundStyle(Color.white.opacity(0.85))
+                .tracking(0.5)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 6)
+                .accessibilityLabel("Per-account framerate cap: \(cap) frames per second")
+        }
     }
 
     /// Primary button text — short. Long target names blew up the row

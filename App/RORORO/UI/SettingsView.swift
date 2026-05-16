@@ -75,8 +75,8 @@ struct SettingsView: View {
                             }
                         }
                         Text(framerateCapEnabled
-                             ? "Roblox-wide cap. Every running instance is throttled at this rate uniformly — applied at next launch. Already-running instances keep their current cap until restart."
-                             : "Default: Roblox uses its built-in 60 fps cap.")
+                             ? "Roblox-wide cap by default — per-account overrides (set on the account row) win when present. Applied at next launch; already-running instances keep their current cap until restart."
+                             : "Default: Roblox uses its built-in 60 fps cap. Per-account overrides (set on the account row) can still set a cap for individual accounts.")
                             .font(Theme.Font.bodySmall)
                             .foregroundStyle(Theme.Color.fg3)
                     }
