@@ -168,12 +168,30 @@ public actor AutoKeysSafetyMonitor {
     }
 
     /// Match `keyCode + modifiers` against the configured kill combo.
-    /// Modifier match is by exact equality after masking — extra held
-    /// modifiers (e.g. Shift+F19 when the user only configured F19)
-    /// won't match, preventing accidental kills from stray modifiers.
+    ///
+    /// Two-mode policy (bug-bash 2026-05-15 — chord reliability):
+    ///
+    ///   - **Bare-key kill (no configured modifiers, e.g. F19):** exact
+    ///     equality. Extra held modifiers like a stray Shift make the
+    ///     event NOT match, so typing Shift+F19 in some other app won't
+    ///     accidentally fire the kill. Defensive — preserves the
+    ///     wave-3b posture.
+    ///   - **Chord kill (≥1 configured modifier, e.g. Ctrl+Opt+Shift+P):**
+    ///     subset match. All configured modifiers must be present, but
+    ///     extras (e.g. a panicked finger brushing Cmd) are allowed. A
+    ///     multi-modifier chord IS the user's intent signal; rejecting
+    ///     it for an extra modifier produces the "kill key sometimes
+    ///     doesn't work" symptom users reported.
     private func matchesKillCombo(keyCode: CGKeyCode, modifiers: UInt) -> Bool {
         guard keyCode == config.killKey.keyCode else { return false }
-        return (modifiers & KillKeyCombo.relevantModifierMask) == config.killKey.modifiers
+        let event = modifiers & KillKeyCombo.relevantModifierMask
+        let configured = config.killKey.modifiers
+        if configured == 0 {
+            // Bare key: stray modifiers must NOT match.
+            return event == 0
+        }
+        // Chord: all configured mods required; extras allowed.
+        return (event & configured) == configured
     }
 
     private func handleKillKeyDown(at timestamp: Date) {
