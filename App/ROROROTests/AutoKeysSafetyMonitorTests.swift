@@ -272,6 +272,111 @@ final class AutoKeysSafetyMonitorTests: XCTestCase {
         await monitor.stop()
     }
 
+    // MARK: - Modifier-match policy
+    //
+    // Bug-bash 2026-05-15: kill-key chords (e.g. Ctrl+Opt+Shift+P) were
+    // unreliable because `matchesKillCombo` enforced exact-equality on the
+    // modifier mask — a panicked user mashing the keyboard would
+    // accidentally hold a stray modifier (e.g. Cmd) and the kill silently
+    // failed to match. Policy now: configured-mods-count == 0 stays
+    // exact-equality (defensive against stray-mod accidental kills on a
+    // bare key like F19); configured-mods-count > 0 (a chord) uses subset
+    // match (configured mods all required, extras allowed — the chord IS
+    // the intent signal).
+    //
+    // Mod bits per `KillKeyCombo.relevantModifierMask`:
+    //   Shift = 1<<17, Control = 1<<18, Option = 1<<19, Command = 1<<20.
+
+    /// REGRESSION: the bug the user reported. Configured chord
+    /// (Ctrl+Opt+Shift+P, keyCode 35) + event with stray Cmd should
+    /// fire kill. Before the fix this asserted exact-equality and
+    /// silently dropped the keystroke.
+    func testKillCombo_ChordWithStrayModifier_StillFires() async throws {
+        let ctrlOptShift: UInt = (1 << 18) | (1 << 19) | (1 << 17)
+        let ctrlOptShiftCmd: UInt = ctrlOptShift | (1 << 20)
+        let tapping = FakeEventTapping()
+        let monitor = AutoKeysSafetyMonitor(
+            tapping: tapping,
+            config: AutoKeysSafetyConfig(
+                killKey: KillKeyCombo(keyCode: 35, modifiers: ctrlOptShift),
+                gesture: .doubleTap(withinSeconds: 0.6),
+                resumeGrace: 5
+            )
+        )
+        await monitor.start()
+        let stream = await monitor.observe()
+
+        let t0 = Date()
+        tapping.send(TappedEvent(kind: .keyDown(35), timestamp: t0, isSelfTagged: false, modifiers: ctrlOptShiftCmd))
+        tapping.send(TappedEvent(kind: .keyDown(35), timestamp: t0.addingTimeInterval(0.2), isSelfTagged: false, modifiers: ctrlOptShiftCmd))
+
+        let events = await collect(stream, count: 1, timeout: 1.0)
+        XCTAssertEqual(events, [.killRequested], "Chord kill should fire when all configured modifiers are held even if extras (like stray Cmd) are also present.")
+
+        await monitor.stop()
+    }
+
+    /// Locks in the defensive behavior for bare-key kills: F19 with no
+    /// configured modifiers must NOT fire when a stray Shift is held —
+    /// otherwise typing Shift+F19 in some other app would accidentally
+    /// kill the cycler.
+    func testKillCombo_BareKeyWithStrayModifier_DoesNotFire() async throws {
+        let shift: UInt = (1 << 17)
+        let tapping = FakeEventTapping()
+        let monitor = AutoKeysSafetyMonitor(
+            tapping: tapping,
+            config: AutoKeysSafetyConfig(
+                killKey: KillKeyCombo(keyCode: 80, modifiers: 0),
+                gesture: .doubleTap(withinSeconds: 0.6),
+                resumeGrace: 5
+            )
+        )
+        await monitor.start()
+        let stream = await monitor.observe()
+
+        let t0 = Date()
+        tapping.send(TappedEvent(kind: .keyDown(80), timestamp: t0, isSelfTagged: false, modifiers: shift))
+        tapping.send(TappedEvent(kind: .keyDown(80), timestamp: t0.addingTimeInterval(0.2), isSelfTagged: false, modifiers: shift))
+
+        // Shift+F19 with a configured kill of "bare F19" must be treated
+        // as engagement (a normal modified keystroke in some other app),
+        // not as kill. With the kill match failing, the keyDown falls
+        // through to `.userEngaged`.
+        let events = await collect(stream, count: 2, timeout: 0.8)
+        XCTAssertEqual(events, [.userEngaged, .userEngaged], "Bare-key kill must reject stray-modifier presses (defensive).")
+
+        await monitor.stop()
+    }
+
+    /// Locks in the "all configured modifiers required" half of the
+    /// subset-match policy: configured Ctrl+Opt+Shift+P with the user
+    /// only pressing Ctrl+Opt+P (missing Shift) must NOT fire.
+    func testKillCombo_ChordMissingRequiredModifier_DoesNotFire() async throws {
+        let ctrlOptShift: UInt = (1 << 18) | (1 << 19) | (1 << 17)
+        let ctrlOptOnly: UInt = (1 << 18) | (1 << 19)
+        let tapping = FakeEventTapping()
+        let monitor = AutoKeysSafetyMonitor(
+            tapping: tapping,
+            config: AutoKeysSafetyConfig(
+                killKey: KillKeyCombo(keyCode: 35, modifiers: ctrlOptShift),
+                gesture: .doubleTap(withinSeconds: 0.6),
+                resumeGrace: 5
+            )
+        )
+        await monitor.start()
+        let stream = await monitor.observe()
+
+        let t0 = Date()
+        tapping.send(TappedEvent(kind: .keyDown(35), timestamp: t0, isSelfTagged: false, modifiers: ctrlOptOnly))
+        tapping.send(TappedEvent(kind: .keyDown(35), timestamp: t0.addingTimeInterval(0.2), isSelfTagged: false, modifiers: ctrlOptOnly))
+
+        // Missing Shift → no kill match → falls through to engagement.
+        let events = await collect(stream, count: 2, timeout: 0.8)
+        XCTAssertEqual(events, [.userEngaged, .userEngaged], "Chord kill must require all configured modifiers; missing one rejects the match.")
+
+        await monitor.stop()
+    }
+
     // MARK: - D-2 focus-theft tests
 
     func testActivation_UntrackedPidNotOwnPid_BroadcastsFocusStolen() async throws {
