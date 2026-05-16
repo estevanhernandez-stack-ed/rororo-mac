@@ -73,6 +73,37 @@ final class LinkLaunchCoordinatorTests: XCTestCase {
         XCTAssertEqual(coord.state, .idle, "State must return to idle after submit.")
     }
 
+    func testCancel_ResolvesWithNil() async {
+        let coord = LinkLaunchCoordinator()
+        let url = URL(string: "roblox-player://1+launchmode+play")!
+        let accounts = [
+            makeAccount(userId: "111", username: "AltAcct1"),
+            makeAccount(userId: "222", username: "AltAcct2"),
+        ]
+
+        let resultTask = Task { @MainActor in
+            await coord.requestChoice(url: url, accounts: accounts)
+        }
+        await waitFor { coord.state != .idle }
+        XCTAssertEqual(
+            coord.state,
+            .choosing(pendingURL: url, accounts: accounts),
+            "State must be .choosing(url, accounts) before cancel."
+        )
+
+        coord.cancel()
+
+        let result = await resultTask.value
+        XCTAssertNil(result, "cancel() must resolve the suspended requestChoice with nil.")
+        XCTAssertEqual(coord.state, .idle, "State must return to idle after cancel.")
+    }
+
+    func testCancel_WhileIdle_IsNoOp() async {
+        let coord = LinkLaunchCoordinator()
+        coord.cancel() // Must not crash, must not change state.
+        XCTAssertEqual(coord.state, .idle, "cancel() while idle must remain idle.")
+    }
+
     /// Small polling helper — XCTestExpectation feels heavy for observing
     /// an @Published transition that happens within a few microseconds.
     private func waitFor(
