@@ -111,13 +111,18 @@ final class MultiInstanceCoordinatorTests: XCTestCase {
         // handleIncomingURL Task discards the nil result and returns.
     }
 
-    /// The 1-account path silently recurses with that userId. Direct
-    /// observation of "recursion happened" requires intercepting the
-    /// launch queue; instead we verify two negative outcomes that would
-    /// both fail if the branch was wrong:
-    ///   - the picker does NOT open
-    ///   - lastError is NOT set (would happen on the 0-account path)
-    func testHandleIncomingURL_OneAccount_DoesNotOpenPickerAndDoesNotError() async {
+    /// The 1-account path skips the picker and silently launches as
+    /// that account via RobloxLauncher.shared.launch. Picker-idle is
+    /// the load-bearing assertion — that's what distinguishes 1-account
+    /// from 2+ accounts.
+    ///
+    /// We do NOT assert on lastError here. In the test environment the
+    /// async launch attempt fails (no Keychain cookie for the test
+    /// userId, no network), which sets lastError to a "Launch failed"
+    /// message. That's expected and orthogonal to the routing decision
+    /// being tested. The 0-account path's "Add an account" banner is
+    /// covered by `testHandleIncomingURL_ZeroAccounts_SetsLastErrorAndAborts`.
+    func testHandleIncomingURL_OneAccount_DoesNotOpenPicker() async {
         let url = URL(string: "roblox-player://1+launchmode+play")!
         AccountStore.shared._setAccountsForTesting([
             makeAccount(userId: "111", username: "alt1")
@@ -127,6 +132,5 @@ final class MultiInstanceCoordinatorTests: XCTestCase {
         await Task.yield()
 
         XCTAssertEqual(LinkLaunchCoordinator.shared.state, .idle, "1-account path must NOT open picker.")
-        XCTAssertNil(MultiInstanceState.shared.lastError, "1-account path must NOT set lastError.")
     }
 }

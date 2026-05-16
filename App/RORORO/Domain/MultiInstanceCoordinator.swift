@@ -193,17 +193,27 @@ public final class MultiInstanceCoordinator {
     public func handleIncomingURL(_ url: URL, displayLabel: String? = nil, userId: String? = nil) {
         // External URL handoffs (e.g. `.onOpenURL` from a browser "Play"
         // click) arrive with userId == nil. Route through the per-account
-        // picker when possible:
+        // picker, then hand off to RobloxLauncher.launch with the chosen
+        // account so that path's full per-account treatment engages:
+        //
+        //   1. Cookie pull for the chosen account
+        //   2. Fresh auth-ticket mint against Roblox API (the browser's
+        //      ticket is for whoever was logged into roblox.com — wrong
+        //      identity once the user picks a different RORORO account)
+        //   3. Per-account FFlags + framerate cap written to disk
+        //   4. displayLabel = account.displayName so the Dock entry is
+        //      the player name, not a UUID basename
+        //
+        // The placeId is extracted from the inbound URI's embedded
+        // placelauncherurl segment; if parse fails, fall back to
+        // `.defaultGame` (the user's favorite-game setting).
+        //
         //   - 0 accounts: surface a banner, drop the launch.
-        //   - 1 account: recurse with that account's userId — picker is
-        //     silently skipped (one option isn't a real choice).
-        //   - 2+ accounts: open LinkLaunchCoordinator's picker; recurse
-        //     with the chosen userId on submit, or no-op on cancel.
-        // Per-account context (cookie isolation, per-account framerate
-        // override, per-account FFlag deltas) only engages on the
-        // userId != nil path; routing through the picker is how we
-        // bridge browser-fired URLs into that path. See
-        // docs/launch-via-link-per-account/design.md.
+        //   - 1 account: silently launch as that account.
+        //   - 2+ accounts: open LinkLaunchCoordinator's picker; launch
+        //     as the chosen account on submit, or no-op on cancel.
+        //
+        // See docs/launch-via-link-per-account/design.md.
         if userId == nil {
             let accounts = AccountStore.shared.accounts
             switch accounts.count {
@@ -211,7 +221,9 @@ public final class MultiInstanceCoordinator {
                 MultiInstanceState.shared.lastError = "Add an account in RORORO before launching from a link."
                 return
             case 1:
-                handleIncomingURL(url, displayLabel: displayLabel, userId: accounts[0].userId)
+                let account = accounts[0]
+                let target = Self.inboundLaunchTarget(for: url)
+                Task { await Self.launchAsAccount(account, target: target) }
                 return
             default:
                 Task { @MainActor in
@@ -219,10 +231,16 @@ public final class MultiInstanceCoordinator {
                         url: url,
                         accounts: accounts
                     )
-                    if let chosen {
-                        self.handleIncomingURL(url, displayLabel: displayLabel, userId: chosen)
+                    guard let chosen,
+                          let chosenAccount = AccountStore.shared.accounts.first(where: { $0.userId == chosen })
+                    else {
+                        // chosen == nil → Cancel / eviction → drop the launch.
+                        // chosen but missing from store → AccountStore mutated
+                        // between picker open and submit (rare); drop too.
+                        return
                     }
-                    // chosen == nil → Cancel / eviction → drop the launch.
+                    let target = Self.inboundLaunchTarget(for: url)
+                    await Self.launchAsAccount(chosenAccount, target: target)
                 }
                 return
             }
@@ -509,6 +527,39 @@ public final class MultiInstanceCoordinator {
                         "open exited \(task.terminationStatus): \(detail.trimmingCharacters(in: .whitespacesAndNewlines))"
                 ]
             )
+        }
+    }
+
+    // MARK: - Inbound-URL → per-account launch
+
+    /// Map an inbound `roblox-player://...` deep-link URI to a
+    /// `LaunchTarget`. Returns `.place(placeId:)` when the URI carries
+    /// a parseable placeId, else falls back to `.defaultGame` so a
+    /// malformed URL still produces a launch attempt (resolved via the
+    /// user's favorite-game setting) rather than a silent drop.
+    private static func inboundLaunchTarget(for url: URL) -> LaunchTarget {
+        if let placeId = InboundLaunchURLParser.placeId(from: url) {
+            return .place(placeId: placeId)
+        }
+        return .defaultGame
+    }
+
+    /// Hand off to `RobloxLauncher.shared.launch(account:target:)`,
+    /// surfacing any error via `MultiInstanceState.lastError` so the
+    /// main-window banner can render it. The launcher's flow handles:
+    ///   - cookie pull for `account`
+    ///   - fresh auth-ticket mint (correct identity for `account`)
+    ///   - per-account FFlag + framerate-cap writes
+    ///   - displayLabel threading into the bundle copy name
+    ///   - re-entry into `handleIncomingURL` with the new URL + userId.
+    private static func launchAsAccount(_ account: Account, target: LaunchTarget) async {
+        do {
+            try await RobloxLauncher.shared.launch(account: account, target: target)
+        } catch {
+            await MainActor.run {
+                MultiInstanceState.shared.lastError =
+                    "Launch failed for \(account.displayName): \(error.localizedDescription)"
+            }
         }
     }
 }
