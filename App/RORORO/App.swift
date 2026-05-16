@@ -29,6 +29,7 @@ struct ROROROApp: App {
         WindowGroup("RORORO") {
             ContentView()
                 .frame(minWidth: 720, minHeight: 480)
+                .background(LinkLaunchPickerBridge())
                 .sheet(isPresented: $showsKeychainBootstrapSheet) {
                     KeychainBootstrapPromptSheet(onDone: {
                         showsKeychainBootstrapSheet = false
