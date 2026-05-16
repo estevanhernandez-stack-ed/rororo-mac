@@ -26,6 +26,14 @@ public final class AccountStore {
 
     public private(set) var accounts: [Account] = []
 
+    /// Test-only seam. `@testable import` exposes this to ROROROTests.
+    /// Not part of the public API — bypasses the Keychain write that
+    /// `add(account:cookie:)` performs, so integration tests can drive
+    /// the account count without setting up a real keychain.
+    internal func _setAccountsForTesting(_ accounts: [Account]) {
+        self.accounts = accounts
+    }
+
     /// JSON file location. Production resolves to
     /// `~/Library/Application Support/RORORO/accounts.json`. Tests pass
     /// a temp path via the internal initializer.

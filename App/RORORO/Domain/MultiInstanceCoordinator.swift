@@ -191,19 +191,50 @@ public final class MultiInstanceCoordinator {
     /// the serial launch worker so simultaneous calls don't race the
     /// 600MB app-copy step.
     public func handleIncomingURL(_ url: URL, displayLabel: String? = nil, userId: String? = nil) {
+        // External URL handoffs (e.g. `.onOpenURL` from a browser "Play"
+        // click) arrive with userId == nil. Route through the per-account
+        // picker when possible:
+        //   - 0 accounts: surface a banner, drop the launch.
+        //   - 1 account: recurse with that account's userId — picker is
+        //     silently skipped (one option isn't a real choice).
+        //   - 2+ accounts: open LinkLaunchCoordinator's picker; recurse
+        //     with the chosen userId on submit, or no-op on cancel.
+        // Per-account context (cookie isolation, per-account framerate
+        // override, per-account FFlag deltas) only engages on the
+        // userId != nil path; routing through the picker is how we
+        // bridge browser-fired URLs into that path. See
+        // docs/launch-via-link-per-account/design.md.
+        if userId == nil {
+            let accounts = AccountStore.shared.accounts
+            switch accounts.count {
+            case 0:
+                MultiInstanceState.shared.lastError = "Add an account in RORORO before launching from a link."
+                return
+            case 1:
+                handleIncomingURL(url, displayLabel: displayLabel, userId: accounts[0].userId)
+                return
+            default:
+                Task { @MainActor in
+                    let chosen = await LinkLaunchCoordinator.shared.requestChoice(
+                        url: url,
+                        accounts: accounts
+                    )
+                    if let chosen {
+                        self.handleIncomingURL(url, displayLabel: displayLabel, userId: chosen)
+                    }
+                    // chosen == nil → Cancel / eviction → drop the launch.
+                }
+                return
+            }
+        }
+
+        // Existing path: userId != nil — either threaded by
+        // RobloxLauncher.launch (which already wrote per-account
+        // settings) or threaded above by the 1-account or picker
+        // branch. Either way the per-account work has been handled;
+        // hand off to the multi-instance launch queue.
         let enabled = MultiInstanceState.shared.enabled
         let semaphoreName = RobloxCompatStore.shared.currentSemaphoreName()
-        // External URL handoffs (`.onOpenURL` from a browser "Play" click,
-        // another app, etc.) arrive here with userId == nil. RobloxLauncher.
-        // launch already wrote FFlags + per-account framerate cap before
-        // calling this method, so on that path we leave the writers alone.
-        // On external handoffs we apply global settings so low-resource
-        // mode + user-set FFlags + the global framerate cap still take
-        // effect. Per-account overrides require the Launch As path.
-        if userId == nil {
-            let snapshot = LaunchSettingsStore.shared.snapshot()
-            RobloxLauncher.applyGlobalLaunchSettings(snapshot: snapshot)
-        }
         let request = LaunchRequest(
             url: url,
             enabled: enabled,
