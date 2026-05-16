@@ -101,6 +101,8 @@ struct ROROROApp: App {
                 CheckForUpdatesMenuItem(viewModel: checkForUpdatesViewModel)
             }
         }
+
+        LinkAccountPickerWindow()
     }
 }
 
