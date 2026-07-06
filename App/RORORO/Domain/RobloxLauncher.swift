@@ -129,11 +129,22 @@ public final class RobloxLauncher {
         applyLaunchSettings(snapshot: snapshot, effectiveCap: effectiveCap)
     }
 
-    /// Variant for external URL handoffs (`.onOpenURL` → coordinator) where
-    /// no account context is available. Applies globals only — global
-    /// framerate cap + global FFlag set (active preset + user-set
-    /// overrides). Per-account overrides can't apply on this path; users wanting them must
-    /// launch via "Launch As" so an account is bound.
+    /// Variant for "no account context available" — applies globals only
+    /// (global framerate cap + global FFlag set). Per-account overrides
+    /// can't apply on this path.
+    ///
+    /// **Currently unused as of 2026-05-16.** Was previously called from
+    /// `MultiInstanceCoordinator.handleIncomingURL` for external URL
+    /// handoffs (`.onOpenURL` → coordinator). That path now always routes
+    /// through an account-bound flow (`launchAsAccount` → `launch`), so
+    /// every inbound URL has an account context by the time settings
+    /// apply. See `docs/launch-via-link-per-account/design.md`.
+    ///
+    /// Kept (not deleted) as a safety net for future no-account entry
+    /// points. If you add such an entry point, prefer routing through
+    /// `launch(account:target:)` with a synthetic/default account if
+    /// possible — `launch` does ticket re-mint + per-account writes and
+    /// is the source of truth for "what should happen on a launch."
     public static func applyGlobalLaunchSettings(snapshot: LaunchSettingsStore.Snapshot) {
         applyLaunchSettings(snapshot: snapshot, effectiveCap: snapshot.framerateCap)
     }
