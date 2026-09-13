@@ -69,3 +69,27 @@ Resolution: scheduled as Task 4.5 in the v2 plan — a one-off PoC variant that 
 **Date:** TBD
 
 Capture: did `--sign -` ad-hoc + entitlement deliver a working Roblox? If yes, log the decision to ship cookie isolation in the public DMG. If no, log the decision to keep it local-dev-only and link to the next-step ticket for solving distribution.
+
+---
+
+## Entry — Gate multi-instance launches on Roblox version parity instead of auto-updating
+
+**Type:** Architectural choice + Gotcha discovered
+**Project:** rororo-mac (bind via repo URL `github.com/estevanhernandez-stack-ed/rororo-mac`)
+**Branch:** `fix/support-remediation`
+**Date:** 2026-09-13
+**Status:** Implemented, tests green, not yet merged
+
+### Summary
+
+A user report ("Another installer is already running" on the second Launch As; Play buttons opening RORORO after a reinstall) was reproduced locally. Root cause of the first symptom: `/Applications/Roblox.app` was behind Roblox's live MacPlayer version, so every per-instance copy spawned its embedded `RobloxPlayerInstaller`. That installer holds a per-user flock at `$TMPDIR/com.roblox.player.installer.lock` keyed by product, not bundle ID, so ADR 0009's unique bundle IDs don't isolate it. The second copy's installer dies on the lock; the first copy's installer replaces `/Applications/Roblox.app` and relaunches the **canonical** app with `-isInstallerLaunch true`, dropping the per-account identity.
+
+**Decision:** add `RobloxVersionGate` at step 0 of `RobloxLauncher.launch` when multi-instance is ON. Compare `CFBundleShortVersionString` with `clientsettingscdn.roblox.com/v2/client-version/MacPlayer` (5-min cache) and throw `LauncherError.robloxUpdateRequired` with the fix in the message. Fail-open when offline.
+
+**Rejected for now:** having RORORO drive the update itself (open canonical Roblox, poll until the version matches, terminate it, resume the queue). More moving parts, pops a Roblox window the user didn't ask for, and Roblox's updater already does the right thing when launched alone. Revisit if the "open Roblox once" instruction turns out to be a support burden.
+
+**Related fixes in the same branch:** `URLSchemeHandler.restoreSync()` on willTerminate (the async restore lost the race with process exit; LS entry + saved-handler pref outlive an uninstall), a Settings danger-zone reset button (the runbook had promised one that didn't exist), and `RororoKeychainBootstrap.needsOnboarding` now checks the keychain file + search list, not just the UserDefaults marker.
+
+### Why this matters in 3–6 months
+
+Every Roblox client release re-creates this window. Anyone reading "multi-instance broke one day" should check version drift before touching the semaphore name.

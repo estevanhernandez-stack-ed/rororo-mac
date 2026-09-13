@@ -171,6 +171,19 @@ visible "this release is pre-release" flag.
 
 ## Local-only notarize
 
+The env vars below live in the 1Password Environment `rororo-mac-release`
+(set up 2026-09-13 via the 1Password Environments MCP server). It is
+mounted as a gitignored `.env` at the repo root; 1Password serves the
+file as a named pipe, so it only reads while the desktop app is open
+and unlocked. Load it with:
+
+```bash
+set -a; source .env; set +a
+```
+
+Then run the scripts as below. To re-mount on a fresh machine: 1Password
+→ Developer → Environments → rororo-mac-release → Local .env file.
+
 Both scripts work locally if you export the env vars:
 
 ```bash
