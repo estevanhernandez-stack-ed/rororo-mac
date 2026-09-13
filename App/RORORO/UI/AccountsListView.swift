@@ -573,6 +573,9 @@ struct AccountsListView: View {
             return "Invalid target: \(reason)"
         case .emptyTicket, .emptyPlaceURL, .emptyBrowserTrackerId:
             return "Internal error building the launch URI. Please report this."
+        case .robloxUpdateRequired:
+            return launcherError.errorDescription
+                ?? "Roblox needs an update. Open Roblox once from /Applications, let it update, then try again."
         }
     }
 }

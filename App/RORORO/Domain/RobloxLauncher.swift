@@ -29,7 +29,7 @@ public final class RobloxLauncher {
 
     public static let placeLauncherEndpoint = "https://assetgame.roblox.com/game/PlaceLauncher.ashx"
 
-    public enum LauncherError: Error, Equatable {
+    public enum LauncherError: Error, Equatable, LocalizedError {
         case emptyTicket
         case emptyPlaceURL
         case emptyBrowserTrackerId
@@ -37,6 +37,22 @@ public final class RobloxLauncher {
         case unresolvedDefaultGame
         case cookieMissing(userId: String)
         case invalidLaunchURI
+        /// /Applications/Roblox.app is behind Roblox's live version and
+        /// multi-instance is ON. Copying a stale bundle spawns Roblox's
+        /// updater per instance; the second one dies on the updater's
+        /// single-instance lock ("Another Installer is already running")
+        /// and the first relaunches the canonical app instead of the
+        /// copy. See RobloxVersionGate.
+        case robloxUpdateRequired(local: String, live: String)
+
+        public var errorDescription: String? {
+            switch self {
+            case .robloxUpdateRequired(let local, let live):
+                return RobloxVersionGate.Verdict.stale(local: local, live: live).userMessage
+            default:
+                return nil
+            }
+        }
     }
 
     // MARK: - Orchestration (Phase 5)
@@ -50,6 +66,18 @@ public final class RobloxLauncher {
     ///   6. Update AccountStore.lastLaunchedAt.
     /// Throws on any failure. UI catches + surfaces via banner.
     public func launch(account: Account, target: LaunchTarget) async throws {
+        // (0) Stale-Roblox gate. Only when multi-instance is ON — the OFF
+        // path opens the canonical Roblox.app, which self-updates cleanly.
+        // Runs before the ticket mint so a blocked launch doesn't burn a
+        // one-shot auth ticket. Fail-open on network trouble (.unknown).
+        let multiInstanceEnabled = await MainActor.run { MultiInstanceState.shared.enabled }
+        if multiInstanceEnabled {
+            let verdict = await RobloxVersionGate.shared.preflight()
+            if case .stale(let local, let live) = verdict {
+                throw LauncherError.robloxUpdateRequired(local: local, live: live)
+            }
+        }
+
         // (1) Cookie pull on main; KeychainStore is sync but AccountStore
         // is @MainActor so we hop.
         let cookie = try await MainActor.run {
