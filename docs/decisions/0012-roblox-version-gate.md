@@ -28,9 +28,20 @@ Add `RobloxVersionGate` (actor) and run `preflight()` as step 0 of `RobloxLaunch
 
 Multi-instance OFF is not gated: it opens the canonical app, which self-updates correctly.
 
+## Amendment 2026-09-13 — RORORO drives the update after all
+
+The "block and tell" v1 shipped in PR #8 the same day and was overruled on review: a launcher that knows exactly what's wrong should fix it, not hand the user a chore. `RobloxUpdateDriver` (actor) now backs an **Update Roblox** button on the Launch As alert and runs unprompted on the `roblox-player://` link path:
+
+1. `open -a /Applications/Roblox.app` with no URL. The canonical player runs its own update check, spawns its installer, which replaces the bundle and relaunches the canonical player.
+2. Poll `CFBundleShortVersionString` every 2 s until it equals live (180 s timeout).
+3. Terminate `com.roblox.RobloxPlayer` only (never the `com.626labs.RORORO.instance.*` copies), since the relaunched canonical player is an empty window holding the singleton semaphore.
+4. Report `.updated`; the caller replays the original launch through the same recursion the TCC-preflight and relogin alerts use.
+
+Concurrent callers (a group launch where every account tripped the gate) join one in-flight run. Failures (`timedOut`, `liveUnknown`, `openFailed`) surface as the plain "Launch failed" alert with the manual fallback in the text. The gate itself is unchanged.
+
 ## Alternatives considered
 
-**RORORO drives the update.** Open canonical Roblox with no URL, poll `Info.plist` until it matches live, terminate the relaunched player, resume the launch queue. Rejected for v0.7.x: pops a Roblox window the user didn't ask for, adds a 30–90 s wait with several timeouts, and Roblox's own updater already does the right thing when launched alone. Revisit if "open Roblox once" becomes a support burden.
+**RORORO drives the update.** Originally rejected for v0.7.x (see amendment above — adopted the same day).
 
 **Compat-feed `knownGoodRobloxVersion`.** Already in `RobloxCompatConfig` but unused; would require a manual push per Roblox release. The live endpoint is authoritative and free.
 

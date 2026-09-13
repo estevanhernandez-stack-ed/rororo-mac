@@ -48,6 +48,20 @@ struct AccountsListView: View {
     @AppStorage("rororo.hasShownTCCPreflightAlert") private var hasShownTCCPreflight: Bool = false
     @State private var pendingPostPreflightLaunch: (account: Account, target: LaunchTarget, savedServerId: UUID?)?
 
+    /// ADR 0012 follow-up — a Launch As that tripped RobloxVersionGate.
+    /// The alert offers "Update Roblox"; on success the original launch
+    /// args are replayed through `launch(account:target:savedServerId:)`,
+    /// the same recursion the TCC preflight and relogin paths use.
+    @State private var pendingRobloxUpdate: PendingRobloxUpdate?
+
+    private struct PendingRobloxUpdate {
+        let account: Account
+        let target: LaunchTarget
+        let savedServerId: UUID?
+        let local: String
+        let live: String
+    }
+
     private struct PendingGroupLaunch: Identifiable {
         let id = UUID()
         let groupName: String
@@ -82,6 +96,25 @@ struct AccountsListView: View {
             Button("OK") { lastLaunchError = nil }
         } message: {
             Text(lastLaunchError ?? "")
+        }
+        .alert(
+            "Roblox needs an update",
+            isPresented: Binding(
+                get: { pendingRobloxUpdate != nil },
+                set: { newValue in if !newValue { pendingRobloxUpdate = nil } }
+            ),
+            presenting: pendingRobloxUpdate
+        ) { pending in
+            Button("Update Roblox") {
+                pendingRobloxUpdate = nil
+                runRobloxUpdate(then: pending)
+            }
+            .keyboardShortcut(.defaultAction)
+            Button("Cancel", role: .cancel) {
+                pendingRobloxUpdate = nil
+            }
+        } message: { pending in
+            Text("Installed \(pending.local), current \(pending.live). RORORO will open Roblox so it can update itself, close it when it's done, then launch \(pending.account.displayName).")
         }
         .alert(
             "macOS will ask for permissions per account",
@@ -535,10 +568,33 @@ struct AccountsListView: View {
                 }
                 lastLaunchError = describe(apiError: error)
             } catch let error as RobloxLauncher.LauncherError {
+                if case .robloxUpdateRequired(let local, let live) = error {
+                    pendingRobloxUpdate = PendingRobloxUpdate(
+                        account: account, target: target, savedServerId: savedServerId,
+                        local: local, live: live
+                    )
+                    return
+                }
                 lastLaunchError = describe(launcherError: error)
             } catch {
                 lastLaunchError = error.localizedDescription
             }
+        }
+    }
+
+    /// Drive Roblox's self-update via RobloxUpdateDriver, then replay
+    /// the launch that tripped the gate. The row spinner stays on for
+    /// the duration so the user sees something is happening.
+    private func runRobloxUpdate(then pending: PendingRobloxUpdate) {
+        inFlightLaunchUserId = pending.account.userId
+        Task { @MainActor in
+            let outcome = await RobloxUpdateDriver.shared.run()
+            inFlightLaunchUserId = nil
+            if let failure = outcome.failureMessage {
+                lastLaunchError = failure
+                return
+            }
+            launch(account: pending.account, target: pending.target, savedServerId: pending.savedServerId)
         }
     }
 

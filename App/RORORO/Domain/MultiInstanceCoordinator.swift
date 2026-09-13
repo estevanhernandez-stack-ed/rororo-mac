@@ -557,6 +557,23 @@ public final class MultiInstanceCoordinator {
     private static func launchAsAccount(_ account: Account, target: LaunchTarget) async {
         do {
             try await RobloxLauncher.shared.launch(account: account, target: target)
+        } catch RobloxLauncher.LauncherError.robloxUpdateRequired {
+            // No alert surface on the link path, and someone who clicked
+            // Play wants Roblox open — drive the update unprompted, then
+            // retry the launch once. Failures land on the banner.
+            let outcome = await RobloxUpdateDriver.shared.run()
+            if let failure = outcome.failureMessage {
+                await MainActor.run { MultiInstanceState.shared.lastError = failure }
+                return
+            }
+            do {
+                try await RobloxLauncher.shared.launch(account: account, target: target)
+            } catch {
+                await MainActor.run {
+                    MultiInstanceState.shared.lastError =
+                        "Launch failed for \(account.displayName) after updating Roblox: \(error.localizedDescription)"
+                }
+            }
         } catch {
             await MainActor.run {
                 MultiInstanceState.shared.lastError =
