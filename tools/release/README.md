@@ -173,16 +173,22 @@ visible "this release is pre-release" flag.
 
 The env vars below live in the 1Password Environment `rororo-mac-release`
 (set up 2026-09-13 via the 1Password Environments MCP server). It is
-mounted as a gitignored `.env` at the repo root; 1Password serves the
-file as a named pipe, so it only reads while the desktop app is open
-and unlocked. Load it with:
+mounted at `~/.config/rororo-mac/release.env`, deliberately OUTSIDE the
+repo: 1Password serves the file as a named pipe and every process that
+opens it triggers a Touch ID prompt and blocks until approved. A pipe
+named `.env` in the workspace root got opened by VS Code's file watcher
+and git integration on every launch and made the editor hang behind a
+pile of 1Password prompts (2026-09-13). Keep it out of any indexed tree.
+
+Load it from a Terminal (approve the one 1Password prompt), then run
+the scripts:
 
 ```bash
-set -a; source .env; set +a
+set -a; source ~/.config/rororo-mac/release.env; set +a
 ```
 
-Then run the scripts as below. To re-mount on a fresh machine: 1Password
-→ Developer → Environments → rororo-mac-release → Local .env file.
+To re-mount on a fresh machine: 1Password → Developer → Environments →
+rororo-mac-release → Local .env file → path above.
 
 Both scripts work locally if you export the env vars:
 
