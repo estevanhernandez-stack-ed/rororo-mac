@@ -60,8 +60,14 @@ public enum RororoKeychainBootstrap {
         probeItems: [RoroKeychainItem] = RoblxKeychainProbeList.items,
         defaults: UserDefaults = .standard
     ) async throws {
+        // The marker alone isn't proof: a manual "uninstall" that deletes
+        // RORORO.keychain-db but leaves com.626labs.rororo-mac.plist behind
+        // comes back with marker == currentVersion and no keychain, and
+        // every Launch As would then prompt for the login password. Treat
+        // "marker current AND keychain present AND in the search list" as
+        // the only no-op state (support case 2026-09-13).
         let storedVersion = defaults.integer(forKey: versionKey)
-        if storedVersion >= currentVersion { return }
+        if storedVersion >= currentVersion, isInstalled(keychainPath: keychainPath) { return }
 
         // Step 1 — create if missing. The file is the persistent indicator
         // that step 1 ran; a stray crash before any later step leaves it
@@ -109,9 +115,28 @@ public enum RororoKeychainBootstrap {
     /// True if `ensureIfNeeded` would do work. The app shell uses this to
     /// decide whether to surface KeychainBootstrapPromptView.
     public static func needsOnboarding(
+        keychainPath: URL = RororoKeychain.productionPath,
         defaults: UserDefaults = .standard
     ) -> Bool {
-        defaults.integer(forKey: versionKey) < currentVersion
+        if defaults.integer(forKey: versionKey) < currentVersion { return true }
+        return !isInstalled(keychainPath: keychainPath)
+    }
+
+    /// True when RORORO.keychain exists on disk AND is in the user's
+    /// keychain search list — the two facts the launch path depends on.
+    /// Read-only (`security list-keychains`), never prompts.
+    public static func isInstalled(
+        keychainPath: URL = RororoKeychain.productionPath
+    ) -> Bool {
+        guard FileManager.default.fileExists(atPath: keychainPath.path) else { return false }
+        let canonical = RororoKeychain.canonicalPath(for: keychainPath)
+        guard let list = try? RororoKeychain.currentSearchList() else {
+            // Can't read the list — don't force a re-onboarding prompt on
+            // a transient CLI failure; the file being present is the
+            // stronger signal.
+            return true
+        }
+        return list.contains(canonical)
     }
 
     /// Cheap belt-and-suspenders unlock of RORORO.keychain. Call from
