@@ -232,6 +232,13 @@ public final class AccountStore {
         for account in snapshot {
             let cookie = (try? cookie(for: account.userId)) ?? nil
             guard let cookie, !cookie.isEmpty else {
+                // No cookie at all (keychain lost on a reinstall or
+                // migrated Mac, or the item was deleted by hand). The
+                // user action is the same as for an expired cookie —
+                // re-login — so flag it now instead of letting the row
+                // claim "healthy" until Launch As fails with "No cookie
+                // stored". (2026-09-13)
+                setCookieStatus(userId: account.userId, status: .expired)
                 continue
             }
 

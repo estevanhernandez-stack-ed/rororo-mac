@@ -241,6 +241,33 @@ final class AccountStoreTests: XCTestCase {
         XCTAssertEqual(decoded.framerateCapOverride, 144)
     }
 
+    // MARK: - refreshAllAccounts: missing cookie
+
+    func testRefreshAllAccounts_MissingCookie_MarksExpired() async throws {
+        // Reinstall / migrated-Mac scenario (2026-09-13): accounts.json
+        // survives, the login keychain doesn't. The boot probe used to
+        // skip accounts with no cookie, leaving a stale "healthy" badge
+        // until the user clicked Launch As and hit "No cookie stored".
+        let store = makeStore()
+        try store.add(account: Account(userId: "1", username: "u", displayName: "U"), cookie: "c")
+        store.setCookieStatus(userId: "1", status: .healthy)
+        // Simulate the keychain losing the item behind the store's back.
+        KeychainStore.inMemoryOverride = [:]
+        XCTAssertNil(try store.cookie(for: "1"))
+
+        await store.refreshAllAccounts()
+
+        XCTAssertEqual(store.accounts.first?.cookieStatus, .expired,
+                       "a missing cookie needs the same user action as an expired one")
+    }
+
+    func testRefreshAllAccounts_EmptyCookie_MarksExpired() async throws {
+        let store = makeStore()
+        try store.add(account: Account(userId: "2", username: "u", displayName: "U"), cookie: "")
+        await store.refreshAllAccounts()
+        XCTAssertEqual(store.accounts.first?.cookieStatus, .expired)
+    }
+
     // MARK: - setCookieStatus / cookie-health backward compat
 
     func testSetCookieStatus_PersistsValueAndTimestamp() throws {
