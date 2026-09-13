@@ -5,7 +5,7 @@ RORORO leaves more behind than the app icon. This page lists every piece, what i
 ## Two symptoms this page fixes
 
 **"Another Installer is already running" when launching a second account.**
-Roblox shipped an update and `/Applications/Roblox.app` is behind. Each per-account copy RORORO makes is a copy of that stale app, so each one tries to update itself. Roblox's updater only allows one at a time. Fix: quit everything, open Roblox from `/Applications` once, let it update, quit it, then use Launch As again. The next RORORO release checks for this before launching and tells you instead of showing the dialog.
+Roblox shipped an update and `/Applications/Roblox.app` is behind. Each per-account copy RORORO makes is a copy of that stale app, so each one tries to update itself. Roblox's updater only allows one at a time. Fix: quit everything, open Roblox from `/Applications` once, let it update, quit it, then use Launch As again. RORORO 0.8.0 and later catches this before launching and offers an **Update Roblox** button that does those steps for you and then launches your account.
 
 **Play buttons on roblox.com open RORORO instead of Roblox, even after deleting RORORO.**
 RORORO registers itself as the handler for `roblox-player://` links while it runs and hands the link back to Roblox on quit. If the handoff didn't happen before you deleted the app, macOS keeps pointing links at RORORO. Fix: reset the handler (step 2 below).
@@ -22,7 +22,7 @@ Quit RORORO from the menu bar tray or with Cmd+Q. Quit every Roblox window. Chec
 
 Pick one:
 
-- **In the next RORORO release (after 0.7.0):** Settings → Danger zone → **Reset roblox-player link handler**. Then quit RORORO.
+- **In RORORO 0.8.0 or later:** Settings → Danger zone → **Reset roblox-player link handler**. Then quit RORORO.
 - **From Terminal, with RORORO still installed:**
 
   ```sh
@@ -89,11 +89,13 @@ Only needed if you used the FFlag editor or the frame-rate cap.
 
 ## Reset without uninstalling
 
-**Keychain setup went wrong or you deleted the keychain by hand:** quit RORORO, run the `security delete-keychain` command from step 4, and relaunch RORORO. The setup sheet comes back. (The next RORORO release notices the missing keychain on its own.)
+**Keychain setup went wrong or you deleted the keychain by hand:** quit RORORO, run the `security delete-keychain` command from step 4, and relaunch RORORO. The setup sheet comes back. (RORORO 0.8.0 and later notices the missing keychain on its own.)
 
 **Links open the wrong app:** step 2.
 
-**Second account won't launch:** open Roblox from `/Applications` once so it updates, quit it, try again.
+**Second account won't launch:** open Roblox from `/Applications` once so it updates, quit it, try again. On 0.8.0 and later, just click **Update Roblox** when Launch As offers it.
+
+**Accounts say "healthy" but Launch As says "No cookie stored":** your login keychain lost the saved sessions (a macOS reinstall or a migration to a new Mac does this). Re-add each account with **+ Add Account**. RORORO 0.8.0 and later flags these rows for re-login at startup.
 
 ## Still stuck
 

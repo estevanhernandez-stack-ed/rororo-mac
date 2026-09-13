@@ -4,7 +4,7 @@
 
 RORORO Mac is the Mac-native multi-Roblox launcher. Sibling to RORORO Windows (C# / .NET 10 / WPF, lives at `github.com/estevanhernandez-stack-ed/ROROROblox`). Same product, different platform; the auth-ticket → launcher-URI flow is byte-identical so accounts can roam between OSes later.
 
-**Status (2026-05-08):** Phases 1–6 shipped — Domain layer (Keychain vault, multi-instance coordinator, RobloxLauncher, URL-scheme handler), UI/Theme, and signed-DMG/PKG release pipeline with Sparkle 2.x auto-update. Currently iterating on launch-time settings writers (Slope A: FFlag injection + FramerateCap throttle). See `docs/decisions/0001-launch-settings-writers.md`. Plan-of-record for any subsequent phases is `~/.claude/plans/plan-mac-native-woolly-pascal.md`.
+**Status (2026-09-13):** v0.7.0 shipped 2026-05-13. Since then on main: per-account inbound-link picker (PR #6), stale-Roblox version gate + graceful "Update Roblox" driver (ADR 0012, PRs #8/#9), synchronous `roblox-player://` handler restore + Settings reset button, keychain re-onboarding when the keychain file is gone, missing-cookie → re-login badge at boot, Safari-shaped login User-Agent for the captcha (PR #10), and `docs/user/uninstall-and-reset.md`. Next tag is expected to be v0.8.0. The 626Labs dashboard project is **RORORO Mac** (`Vd5msUagVqiZP5QYSk5I`); log decisions there. Plan-of-record for any subsequent phases is `~/.claude/plans/plan-mac-native-woolly-pascal.md`.
 
 ## Tech Stack
 
