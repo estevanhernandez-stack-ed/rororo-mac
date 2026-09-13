@@ -1,0 +1,38 @@
+# One-off recovery: hand the SPARKLE_ED_PRIVATE_KEY secret back to the
+# maintainer, encrypted to a throwaway RSA public key generated locally.
+# GitHub Secrets are write-only through the UI; this is the sanctioned
+# way to read one back without ever printing it.
+#
+# DELETE THIS FILE (and tools/release/recovery.pub.pem, and the run's
+# artifact) once the key is in 1Password. Manual dispatch only.
+name: recover-sparkle-key
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Encrypt secret to the recovery public key
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -s tools/release/recovery.pub.pem
+          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" \
+            | openssl pkeyutl -encrypt -pubin -inkey tools/release/recovery.pub.pem \
+                -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
+                -out sparkle-key.enc
+          echo "encrypted $(wc -c < sparkle-key.enc) bytes"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sparkle-key-encrypted
+          path: sparkle-key.enc
+          retention-days: 1
