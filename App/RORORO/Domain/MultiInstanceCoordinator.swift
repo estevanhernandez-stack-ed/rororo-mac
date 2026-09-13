@@ -295,9 +295,11 @@ public final class MultiInstanceCoordinator {
         if !Self.anyRobloxRunning() {
             try? ClientSettingsWriter.cleanup()
         }
-        Task { @MainActor in
-            await URLSchemeHandler.shared.restore()
-        }
+        // Synchronous restore — the async variant raced the quit deadline
+        // and lost often enough that LaunchServices kept routing
+        // roblox-player:// to a RORORO that wasn't running (or, post-
+        // uninstall, didn't exist). See URLSchemeHandler.restoreSync.
+        URLSchemeHandler.shared.restoreSync()
     }
 
     @objc nonisolated private func handleAppDidTerminate(_ note: Notification) {

@@ -10,6 +10,7 @@ struct SettingsView: View {
 
     @State private var multiInstanceEnabled = MultiInstanceState.shared.enabled
     @State private var dangerZoneVisible = false
+    @State private var handlerResetFlash = false
 
     @ObservedObject private var launchSettings = LaunchSettingsStore.shared
     @State private var framerateCapEnabled: Bool
@@ -99,10 +100,21 @@ struct SettingsView: View {
                     }
 
                     DisclosureGroup("Danger zone", isExpanded: $dangerZoneVisible) {
-                        Text("Future surface for sensitive operations (e.g. exporting cookies for sibling apps). Off in v0.1.0.")
-                            .font(Theme.Font.bodySmall)
-                            .foregroundStyle(Theme.Color.fg3)
-                            .padding(.top, Theme.Spacing.xs)
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            Button {
+                                URLSchemeHandler.shared.restoreSync()
+                                handlerResetFlash = true
+                            } label: {
+                                Label(handlerResetFlash ? "Handler reset" : "Reset roblox-player link handler",
+                                      systemImage: "arrow.uturn.backward")
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(Theme.Color.productTeal)
+                            Text("Hands roblox-player:// links back to Roblox.app right now. RORORO claims the scheme again on its next launch. Use this before uninstalling, or if Play buttons on roblox.com open RORORO when they shouldn't.")
+                                .font(Theme.Font.bodySmall)
+                                .foregroundStyle(Theme.Color.fg3)
+                        }
+                        .padding(.top, Theme.Spacing.xs)
                     }
                     .font(Theme.Font.bodySmall)
                 }
