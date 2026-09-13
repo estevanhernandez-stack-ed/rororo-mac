@@ -27,9 +27,9 @@ brew install --cask rororo
 
 That installs RORORO to `/Applications`. Sparkle handles in-app auto-updates from there — no need to `brew upgrade` for new versions.
 
-### Direct DMG
+### Direct download
 
-Download the latest `RORORO.dmg` from the [Releases page](https://github.com/estevanhernandez-stack-ed/rororo-mac/releases/latest), open it, drag `RORORO.app` to `/Applications`, launch. Notarized + signed by Apple — no Gatekeeper warnings. Auto-updates via Sparkle thereafter.
+Download the latest `RORORO.pkg` from the [Releases page](https://github.com/estevanhernandez-stack-ed/rororo-mac/releases/latest) and open it; the installer puts `RORORO.app` in `/Applications`. Signed with a Developer ID and notarized by Apple — no Gatekeeper warnings. Auto-updates via Sparkle thereafter.
 
 Requires macOS 14 (Sonoma) or later.
 
