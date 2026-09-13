@@ -28,8 +28,13 @@ final class RororoKeychainItemsTests: XCTestCase {
     }
 
     override func tearDown() {
-        try? RororoKeychain.removeFromSearchListIfPresent(keychainPath: tempPath)
-        try? RororoKeychain.delete(keychainPath: tempPath)
+        // setUpWithError's XCTSkipUnless still runs tearDown; without the
+        // guard the implicitly-unwrapped tempPath is nil and the whole
+        // test process crashes, taking every later test class with it.
+        if let tempPath {
+            try? RororoKeychain.removeFromSearchListIfPresent(keychainPath: tempPath)
+            try? RororoKeychain.delete(keychainPath: tempPath)
+        }
         super.tearDown()
     }
 

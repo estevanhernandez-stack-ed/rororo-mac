@@ -33,9 +33,13 @@ final class RororoKeychainBootstrapTests: XCTestCase {
     }
 
     override func tearDown() {
-        try? RororoKeychain.removeFromSearchListIfPresent(keychainPath: tempPath)
-        try? RororoKeychain.delete(keychainPath: tempPath)
-        defaults.removeObject(forKey: RororoKeychainBootstrap.versionKey)
+        // Skipped-in-setUp runs still hit tearDown; guard the IUOs so a
+        // skip doesn't crash the test host (see RororoKeychainTests).
+        if let tempPath {
+            try? RororoKeychain.removeFromSearchListIfPresent(keychainPath: tempPath)
+            try? RororoKeychain.delete(keychainPath: tempPath)
+        }
+        defaults?.removeObject(forKey: RororoKeychainBootstrap.versionKey)
         super.tearDown()
     }
 
