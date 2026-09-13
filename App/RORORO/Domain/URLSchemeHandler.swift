@@ -112,6 +112,48 @@ public final class URLSchemeHandler {
         defaults.removeObject(forKey: Self.savedHandlerKey)
     }
 
+    /// Synchronous restore for the quit path. `restore()` is async and
+    /// the process routinely exits before `NSWorkspace.setDefaultApplication`'s
+    /// completion fires — observed 2026-09-13 on the dev machine: RORORO not
+    /// running, LaunchServices still resolving `roblox-player://` to
+    /// /Applications/RORORO.app. Combined with a user deleting RORORO.app
+    /// (the LS handler entry and the saved-previous pref both survive that),
+    /// every Play click then launches RORORO instead of Roblox — support
+    /// case 2026-09-13. `LSSetDefaultHandlerForURLScheme` is deprecated but
+    /// still shipped and returns synchronously, which is what a
+    /// willTerminate hook needs.
+    ///
+    /// Restores to the saved-previous handler if that app still exists,
+    /// else to `/Applications/Roblox.app` if present, else no-op.
+    public func restoreSync() {
+        let defaults = UserDefaults.standard
+        let previousID = defaults.string(forKey: Self.savedHandlerKey)
+        let ourID = Bundle.main.bundleIdentifier
+
+        var targetID: String?
+        if let previousID,
+           previousID.caseInsensitiveCompare(ourID ?? "") != .orderedSame,
+           NSWorkspace.shared.urlForApplication(withBundleIdentifier: previousID) != nil {
+            targetID = previousID
+        } else {
+            let robloxURL = URL(fileURLWithPath: RobloxAppCopier.robloxAppPath, isDirectory: true)
+            if let bundleID = Bundle(url: robloxURL)?.bundleIdentifier {
+                targetID = bundleID
+            }
+        }
+        guard let targetID else { return }
+
+        let status = LSSetDefaultHandlerForURLScheme(
+            Self.robloxPlayerScheme as CFString,
+            targetID as CFString
+        )
+        if status == noErr {
+            defaults.removeObject(forKey: Self.savedHandlerKey)
+        } else {
+            NSLog("[RORORO] URLSchemeHandler.restoreSync: LSSetDefaultHandlerForURLScheme → %d", status)
+        }
+    }
+
     private func setDefaultApplicationAsync(at appURL: URL, scheme: String) async throws {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             NSWorkspace.shared.setDefaultApplication(at: appURL, toOpenURLsWithScheme: scheme) { error in

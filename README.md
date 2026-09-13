@@ -60,8 +60,9 @@ The first time you Launch As, set a default Roblox game URL in Settings. Paste a
 |---|---|
 | `~/Library/Application Support/RORORO/accounts.json` | Public account profile data (display name, user ID, avatar URL, last-launched timestamp). Plain JSON — no secrets. |
 | Login Keychain (`com.626labs.rororo-mac.account-cookie`) | Roblox `.ROBLOSECURITY` session cookies. One Keychain item per account, keyed by Roblox userId. Never syncs to iCloud. |
-| `~/Library/Application Support/RORORO/instances/` | Per-launch copies of `Roblox.app`. Cleaned up automatically (entries older than 24h removed on next boot). |
+| `~/Applications/RORORO/instances/` | Per-launch copies of `Roblox.app`. Cleaned up automatically (entries older than 24h removed on next boot). |
 | `~/Library/Preferences/com.626labs.rororo-mac.plist` | UI preferences — multi-instance toggle, default game URL, saved URL-scheme handler bundle ID. |
+| `~/Library/Keychains/RORORO.keychain-db` | RORORO's private keychain, added to your keychain search list after the one-time setup prompt. Holds placeholder entries that let per-account Roblox copies launch without a password prompt. No cookies live here. |
 
 ## What about my Roblox password?
 
@@ -98,6 +99,7 @@ RORORO Mac is **not a fork** — it's a clean reimplementation in Swift with sub
 ## Roblox-side caveats
 
 - Roblox / Hyperion has stated multi-instancing "may be considered malicious behavior." Risk of a ban appears low because we don't inject into or modify the Roblox client — we only call a public POSIX function (`sem_unlink`) and copy a public app bundle. But it is non-zero. Don't run this on accounts you can't afford to lose.
+- **Keep Roblox itself current.** Multi-instance copies `/Applications/Roblox.app`; if that app is behind Roblox's live version, each copy tries to self-update and Roblox's updater only allows one at a time ("Another Installer is already running"). RORORO checks for this before launching and tells you to open Roblox once so it can update.
 - The auth-ticket endpoint contract is what we depend on. If Roblox changes it, multi-instance launches will start failing. The Diagnostics view surfaces the canonical semaphore name; bumping it is a one-line code change.
 
 ## Building from source
@@ -117,6 +119,7 @@ xcodebuild -project App/RORORO.xcodeproj -scheme RORORO test \
 ## Documentation
 
 - **Auto-keys macro cycler — user guide:** [`docs/user/auto-keys-recording.md`](docs/user/auto-keys-recording.md) — record macros, share them across accounts, manage the library, configure the default for unrecorded accounts.
+- **Uninstall, reset, reinstall:** [`docs/user/uninstall-and-reset.md`](docs/user/uninstall-and-reset.md) — every file RORORO leaves behind, how to hand `roblox-player://` links back to Roblox, and the reinstall order that avoids the keychain prompt.
 - **Privacy policy:** [`docs/PRIVACY.md`](docs/PRIVACY.md)
 - **Technical spec:** [`docs/spec.md`](docs/spec.md)
 - **PRD:** [`docs/prd.md`](docs/prd.md)

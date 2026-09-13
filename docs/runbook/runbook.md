@@ -204,13 +204,13 @@ Users see the fix on their next app launch.
 
 **Detection.** `URLSchemeHandler.shared.isClaimed` reports true post-quit (re-check via Finder *Get Info → Open with* on a `.roblox-player` URL or via `defaults read com.apple.LaunchServices`). Diagnostics bundle's `url-scheme-handler.txt` reports current handler bundle ID and saved-previous handler.
 
-**Cause.** `URLSchemeHandler.restore` is fired async from `willTerminateNotification` (`MultiInstanceCoordinator.swift:220-232`). The app may exit before the `NSWorkspace.setDefaultApplication` completion handler runs. `UserDefaults` still holds the previous handler key (`RORORO.URLSchemeHandler.savedRobloxPlayerHandler`); on next boot, `bootIfNeeded` re-claims and the saved-previous entry remains available for the next quit's restore. If RORORO crashes hard mid-session, same recovery path.
+**Cause.** Through v0.7.0, `URLSchemeHandler.restore` was fired async from `willTerminateNotification` and the process routinely exited before `NSWorkspace.setDefaultApplication`'s completion ran. Confirmed 2026-09-13 on the dev machine: RORORO not running, `NSWorkspace.urlForApplication(toOpen: roblox-player://)` still resolving to `/Applications/RORORO.app`. The LaunchServices handler entry and the saved-previous pref (`RORORO.URLSchemeHandler.savedRobloxPlayerHandler` in `com.626labs.rororo-mac.plist`) both survive the user deleting RORORO.app, which is how a support case's "Play opens RORORO instead of Roblox, even after reinstall" happens. Fixed post-0.7.0: the quit path calls `URLSchemeHandler.restoreSync()` (`LSSetDefaultHandlerForURLScheme`, synchronous).
 
 **Mitigation (user).**
 
-- Reopen RORORO once and quit cleanly — `URLSchemeHandler.restore` fires again and the saved-previous handler is reinstated.
-- Or: Settings → **Reset system handler** button (`MultiInstanceCoordinator.shutDown()` calls `URLSchemeHandler.restore`).
-- Or: manual macOS recourse — open Finder → right-click any saved `roblox-player://` link → *Get Info → Open with → /Applications/Roblox.app*.
+- Settings → Danger zone → **Reset roblox-player link handler** (post-0.7.0; calls `URLSchemeHandler.restoreSync`).
+- On v0.7.0 or with RORORO already deleted: `lsregister -u /Applications/RORORO.app` (or the Trash path), which unregisters RORORO and lets LS fall back to Roblox.app. Full recipe in `docs/user/uninstall-and-reset.md`.
+- Verify with `open "roblox-player://"` — Roblox should launch.
 
 **Rollback.** N/A — local state.
 
@@ -316,6 +316,31 @@ Each candidate's `Info.plist` must report `CFBundleIdentifier` starting with `co
 
 ---
 
+### 5.9 Stale Roblox.app — "Another Installer is already running" on the second launch
+
+**Symptom.** With **Multi-Instance: ON**, the first Launch As works (or seems to), the second shows Roblox's own dialog *"Another Installer is already running."* Often reported as "multi-instance stopped working one day" — the day is whenever Roblox shipped a client update.
+
+**Cause (reproduced 2026-09-13 with local 0.726.0.7261140 vs live 0.738.0.7381393).** Each per-instance copy is a clone of the stale `/Applications/Roblox.app`. On launch, `RobloxPlayer` runs `AppUpdateAdapter::checkForProtocolLaunchUpdate`, sees it's behind, and spawns its embedded `RobloxPlayerInstaller.app`. The installer takes a per-user single-instance flock at `$TMPDIR/com.roblox.player.installer.lock` — keyed by product, not bundle ID, so per-instance bundle IDs don't isolate it. Timeline from the securityd/installer log capture:
+
+```
+09:59:22  installer A (copy 1)  Single instance lock acquired.
+09:59:29  installer B (copy 2)  ERROR acquireSingleInstanceLock: Another instance is already running.
+09:59:30  installer A           moved ~/Library/Roblox/UnzippedBundle/RobloxPlayer.app to /Applications/Roblox.app
+09:59:30  installer A           relaunches /Applications/Roblox.app -isInstallerLaunch true
+```
+
+Two consequences: copy 2 dies with the dialog, and copy 1's installer relaunches the **canonical** single-instance app, not the per-instance copy — so the account identity and launch URL for copy 1 are gone too.
+
+**Detection.** Diagnostics bundle `system-info.txt` → `Roblox.app version` differs from `https://clientsettingscdn.roblox.com/v2/client-version/MacPlayer` → `version`. `~/Library/Logs/Roblox/RobloxPlayerInstaller_<date>.log` contains `Another instance is already running.`
+
+**Mitigation (user).** Quit all Roblox, open `/Applications/Roblox.app` on its own once, let it update, quit, retry Launch As.
+
+**Prevention (code).** `RobloxVersionGate.preflight()` runs at the top of `RobloxLauncher.launch` when multi-instance is ON, compares `CFBundleShortVersionString` against the live MacPlayer version (5-minute cache, fail-open when offline), and throws `LauncherError.robloxUpdateRequired` with the fix in the message. Landed post-0.7.0.
+
+**Rollback.** N/A.
+
+<!-- Source: App/RORORO/Domain/RobloxVersionGate.swift, App/RORORO/Domain/RobloxLauncher.swift, ~/Library/Logs/Roblox/RobloxPlayerInstaller_*.log -->
+
 ## §6 Alerting / paging
 
 `NOT APPLICABLE — open-source desktop app, no telemetry, no alerting.` See §3.
@@ -343,7 +368,9 @@ Each candidate's `Info.plist` must report `CFBundleIdentifier` starting with `co
 - `log show --predicate 'process == "RORORO"' --last 1h --style syslog` — the same call `DiagnosticsBundle.fetchRecentLogs` makes.
 - Console.app filtered to process `RORORO` — live tail.
 - Activity Monitor — confirm spawned Roblox instances are listed as distinct PIDs (multi-instance working).
-- `ls -la ~/Library/Application\ Support/RORORO/instances/` — per-launch copies; stale entries older than 24h should be auto-removed on next app boot.
+- `ls -la ~/Applications/RORORO/instances/` — per-launch copies; stale entries older than 24h should be auto-removed on next app boot.
+- `open "roblox-player://"` with RORORO quit — should launch Roblox. If RORORO launches, the scheme handler wasn't restored (§5.4).
+- `defaults read /Applications/Roblox.app/Contents/Info.plist CFBundleShortVersionString` vs `curl -s https://clientsettingscdn.roblox.com/v2/client-version/MacPlayer` — mismatch means every multi-instance launch will trip Roblox's updater (§5.9).
 
 ### 8.3 Sparkle-side
 
