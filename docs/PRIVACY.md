@@ -50,7 +50,9 @@ RORORO initiates HTTPS connections **only** to:
 | `estevanhernandez-stack-ed.github.io/rororo-mac/appcast.xml` | At app startup (when auto-checks are enabled) | Sparkle auto-update appcast — XML index of available releases, signed with EdDSA. |
 | `github.com/estevanhernandez-stack-ed/rororo-mac/releases/...` | When applying an update | Sparkle downloads the update DMG from GitHub Releases. |
 
-RORORO sends a `User-Agent` header of `RORORO-Mac/<version>` on every Roblox-side request. We do **not** spoof a browser UA. We are transparent and identifiable to the receiving servers.
+RORORO sends a `User-Agent` header of `RORORO-Mac/<version>` on every Roblox-side request it makes itself. We do **not** spoof a browser UA. We are transparent and identifiable to the receiving servers.
+
+The embedded login page (Add Account / re-login) is a `WKWebView`, which is Safari's engine. Its `User-Agent` is WebKit's default plus the `Version/<installed Safari> Safari/605.1.15` suffix that Safari itself sends, so the page and its captcha see the same browser shape they would in Safari. The Safari version is read from the copy installed on your Mac; nothing is invented.
 
 RORORO makes **no other network connections**. There are no analytics endpoints, telemetry endpoints, or third-party SDKs.
 

@@ -65,9 +65,13 @@ public final class CookieCaptureViewController: NSViewController, WKNavigationDe
         // No leakage across launches; closing the sheet wipes them. This
         // also forces a fresh login each time — which is what we want.
         config.websiteDataStore = .nonPersistent()
-        // Keep WKWebView's default User-Agent (a Safari shape) — Roblox's
-        // login flow renders correctly under it. We only customize when
-        // we hit Roblox's API directly via RobloxApi.
+        // Complete the User-Agent to Safari's real shape. WKWebView's
+        // default stops at "(KHTML, like Gecko)"; Roblox's captcha vendor
+        // reads that as an embedded browser and loops the challenge
+        // (2026-09-13). Same engine, same format, Version token read from
+        // the installed Safari — see LoginUserAgent. RobloxApi keeps its
+        // own honest RORORO-Mac/<version> UA for direct API calls.
+        config.applicationNameForUserAgent = LoginUserAgent.defaultApplicationName()
         self.webView = WKWebView(frame: .zero, configuration: config)
         self.onCaptured = onCaptured
         self.onCancel = onCancel
