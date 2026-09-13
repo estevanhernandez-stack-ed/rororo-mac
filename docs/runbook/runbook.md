@@ -335,7 +335,7 @@ Two consequences: copy 2 dies with the dialog, and copy 1's installer relaunches
 
 **Mitigation (user).** Quit all Roblox, open `/Applications/Roblox.app` on its own once, let it update, quit, retry Launch As.
 
-**Prevention (code).** `RobloxVersionGate.preflight()` runs at the top of `RobloxLauncher.launch` when multi-instance is ON, compares `CFBundleShortVersionString` against the live MacPlayer version (5-minute cache, fail-open when offline), and throws `LauncherError.robloxUpdateRequired` with the fix in the message. Landed post-0.7.0.
+**Prevention (code).** `RobloxVersionGate.preflight()` runs at the top of `RobloxLauncher.launch` when multi-instance is ON, compares `CFBundleShortVersionString` against the live MacPlayer version (5-minute cache, fail-open when offline), and throws `LauncherError.robloxUpdateRequired`. The Launch As alert then offers **Update Roblox**: `RobloxUpdateDriver` opens the canonical player, waits for version parity (180 s), dismisses the relaunched canonical player, and replays the launch. The link path runs the driver unprompted. Landed post-0.7.0 (ADR 0012 + amendment).
 
 **Rollback.** N/A.
 
