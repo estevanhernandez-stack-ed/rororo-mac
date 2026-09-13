@@ -40,6 +40,7 @@ Requires macOS 14 (Sonoma) or later.
 - **Keychain-backed cookie vault.** Saved cookies live in your login Keychain (`kSecAttrAccessibleWhenUnlocked` + `kSecAttrSynchronizable: false`). They never leave your Mac and never sync to iCloud.
 - **Per-game launch routing.** Set a default Roblox game URL once; *Launch As* lands every alt in that game.
 - **Auto-keys macro cycler.** Record keyboard + mouse macros per account; the cycler walks through each running Roblox window and replays them to keep accounts alive past the AFK timer. Macros live in a shared library, can be renamed / shared / managed without re-recording. Full guide: [`docs/user/auto-keys-recording.md`](docs/user/auto-keys-recording.md).
+- **Stale-Roblox guard.** Launch As checks that `/Applications/Roblox.app` matches Roblox's live version first. If it's behind, one click runs Roblox's updater and then continues the launch, instead of every account copy fighting over the updater.
 - **Menu-bar tray.** State-coloured ring shows multi-instance status at a glance (cyan = on, slate = off, magenta = error).
 - **Sparkle auto-update.** EdDSA-signed appcast hosted at `https://estevanhernandez-stack-ed.github.io/rororo-mac/appcast.xml`. Drift-compatible with future Roblox-side changes.
 - **No telemetry.** Anonymous GitHub Releases download counts only.
@@ -99,7 +100,7 @@ RORORO Mac is **not a fork** — it's a clean reimplementation in Swift with sub
 ## Roblox-side caveats
 
 - Roblox / Hyperion has stated multi-instancing "may be considered malicious behavior." Risk of a ban appears low because we don't inject into or modify the Roblox client — we only call a public POSIX function (`sem_unlink`) and copy a public app bundle. But it is non-zero. Don't run this on accounts you can't afford to lose.
-- **Keep Roblox itself current.** Multi-instance copies `/Applications/Roblox.app`; if that app is behind Roblox's live version, each copy tries to self-update and Roblox's updater only allows one at a time ("Another Installer is already running"). RORORO checks for this before launching and tells you to open Roblox once so it can update.
+- **Keep Roblox itself current.** Multi-instance copies `/Applications/Roblox.app`; if that app is behind Roblox's live version, each copy tries to self-update and Roblox's updater only allows one at a time ("Another Installer is already running"). Since 0.8.0, RORORO checks for this before launching and offers an **Update Roblox** button that runs Roblox's own updater, waits for it to finish, then launches your account.
 - The auth-ticket endpoint contract is what we depend on. If Roblox changes it, multi-instance launches will start failing. The Diagnostics view surfaces the canonical semaphore name; bumping it is a one-line code change.
 
 ## Building from source
