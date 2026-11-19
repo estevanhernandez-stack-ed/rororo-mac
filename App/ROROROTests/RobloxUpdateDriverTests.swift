@@ -126,7 +126,8 @@ final class RobloxUpdateDriverTests: XCTestCase {
     func testRun_LocalAheadOfLive_IsAlreadyCurrent() async {
         let probe = Probe(local: "0.740.0.7400001")
         let driver = makeDriver(probe: probe, live: "0.738.0.7381393")
-        XCTAssertEqual(await driver.run(), .alreadyCurrent)
+        let outcome = await driver.run()
+        XCTAssertEqual(outcome, .alreadyCurrent)
         XCTAssertEqual(probe.openCalls, 0)
     }
 
