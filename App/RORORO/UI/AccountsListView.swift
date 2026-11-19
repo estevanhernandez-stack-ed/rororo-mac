@@ -110,11 +110,19 @@ struct AccountsListView: View {
                 runRobloxUpdate(then: pending)
             }
             .keyboardShortcut(.defaultAction)
+            // Escape hatch (support case 2026-11-19): Roblox doesn't always
+            // install the build its CDN reports. Remember this pair so the
+            // gate stops asking until Roblox or the live build changes.
+            Button("Launch Anyway") {
+                pendingRobloxUpdate = nil
+                RobloxVersionGate.recordDeclined(local: pending.local, live: pending.live)
+                launch(account: pending.account, target: pending.target, savedServerId: pending.savedServerId)
+            }
             Button("Cancel", role: .cancel) {
                 pendingRobloxUpdate = nil
             }
         } message: { pending in
-            Text("Installed \(pending.local), current \(pending.live). RORORO will open Roblox so it can update itself, close it when it's done, then launch \(pending.account.displayName).")
+            Text("Installed \(pending.local), current \(pending.live). RORORO will open Roblox so it can update itself, close it when it's done, then launch \(pending.account.displayName). If Roblox doesn't update when opened, choose Launch Anyway.")
         }
         .alert(
             "macOS will ask for permissions per account",

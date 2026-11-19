@@ -159,4 +159,34 @@ final class RobloxVersionGateTests: XCTestCase {
         try data.write(to: contents.appendingPathComponent("Info.plist"))
         return app
     }
+
+    // MARK: - Support case 2026-11-19 (declined / local-ahead)
+
+    func testVerdict_LocalAheadOfLive_IsCurrent() {
+        XCTAssertEqual(RobloxVersionGate.verdict(local: "0.740.0.7400001", live: "0.738.0.7381393"), .current)
+    }
+
+    func testVerdict_ComparesNumericallyNotLexically() {
+        XCTAssertTrue(RobloxVersionGate.isBehind("0.99.0.1", "0.738.0.1"))
+        XCTAssertFalse(RobloxVersionGate.isBehind("0.738.0.1", "0.99.0.1"))
+    }
+
+    func testVerdict_DeclinedPair_IsCurrent_OnlyForThatPair() {
+        let declined = (local: "0.726.0.7261140", live: "0.738.0.7381393")
+        XCTAssertEqual(RobloxVersionGate.verdict(local: declined.local, live: declined.live, declined: declined), .current)
+        // A newer live build re-arms the gate.
+        XCTAssertEqual(
+            RobloxVersionGate.verdict(local: declined.local, live: "0.739.0.7390000", declined: declined),
+            .stale(local: declined.local, live: "0.739.0.7390000")
+        )
+    }
+
+    func testDeclinedPair_RoundTripsThroughDefaults() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "RobloxVersionGateTests.\(UUID().uuidString)"))
+        XCTAssertNil(RobloxVersionGate.declinedPair(defaults: defaults))
+        RobloxVersionGate.recordDeclined(local: "a", live: "b", defaults: defaults)
+        let pair = try XCTUnwrap(RobloxVersionGate.declinedPair(defaults: defaults))
+        XCTAssertEqual(pair.local, "a")
+        XCTAssertEqual(pair.live, "b")
+    }
 }
