@@ -42,6 +42,13 @@ final class RobloxUpdateDriverTests: XCTestCase {
         func sleep(_ s: TimeInterval) { lock.lock(); sleeps.append(s); lock.unlock() }
     }
 
+    private final class Recorded: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _pairs: [[String]] = []
+        var pairs: [[String]] { lock.lock(); defer { lock.unlock() }; return _pairs }
+        func add(_ local: String, _ live: String) { lock.lock(); _pairs.append([local, live]); lock.unlock() }
+    }
+
     private struct FakeSleeper: Sleeper {
         let probe: Probe
         func sleep(seconds: TimeInterval) async throws {
@@ -55,14 +62,16 @@ final class RobloxUpdateDriverTests: XCTestCase {
         probe: Probe,
         live: String?,
         timeout: TimeInterval = 180,
-        pollInterval: TimeInterval = 2
+        pollInterval: TimeInterval = 2,
+        recorded: Recorded = Recorded()
     ) -> RobloxUpdateDriver {
         let deps = RobloxUpdateDriver.Dependencies(
             localVersion: { probe.localVersion() },
             liveVersion: { live },
             openRoblox: { probe.open() },
             terminateCanonicalPlayer: { probe.terminate() },
-            sleeper: FakeSleeper(probe: probe)
+            sleeper: FakeSleeper(probe: probe),
+            recordDeclined: { local, live in recorded.add(local, live) }
         )
         return RobloxUpdateDriver(
             dependencies: deps,
@@ -99,14 +108,27 @@ final class RobloxUpdateDriverTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(probe.terminateCalls, 1, "dismiss the relaunched player")
     }
 
-    func testRun_NeverReachesParity_TimesOut() async {
+    func testRun_RobloxNeverMoves_ReportsDeclinedAndRecordsPair() async {
+        // Support case 2026-11-19: live is ahead, Roblox opens and won't
+        // install it. Must not be a failure, or every launch dead-ends.
         let probe = Probe(local: "0.726.0.7261140")
-        let driver = makeDriver(probe: probe, live: "0.738.0.7381393", timeout: 10, pollInterval: 2)
+        let recorded = Recorded()
+        let driver = makeDriver(probe: probe, live: "0.738.0.7381393", timeout: 10, pollInterval: 2, recorded: recorded)
         let outcome = await driver.run()
-        XCTAssertEqual(outcome, .timedOut(local: "0.726.0.7261140", live: "0.738.0.7381393"))
+        XCTAssertEqual(outcome, .declinedByRoblox(local: "0.726.0.7261140", live: "0.738.0.7381393"))
+        XCTAssertNil(outcome.failureMessage, "callers replay the launch")
+        XCTAssertEqual(recorded.pairs, [["0.726.0.7261140", "0.738.0.7381393"]])
         XCTAssertEqual(probe.openCalls, 1)
-        XCTAssertEqual(probe.terminateCalls, 0, "don't kill anything on timeout")
+        XCTAssertEqual(probe.terminateCalls, 1, "close the canonical window we opened")
         XCTAssertGreaterThanOrEqual(probe.sleeps.count, 5, "polled up to the deadline")
+    }
+
+    func testRun_LocalAheadOfLive_IsAlreadyCurrent() async {
+        let probe = Probe(local: "0.740.0.7400001")
+        let driver = makeDriver(probe: probe, live: "0.738.0.7381393")
+        let outcome = await driver.run()
+        XCTAssertEqual(outcome, .alreadyCurrent)
+        XCTAssertEqual(probe.openCalls, 0)
     }
 
     func testRun_ConcurrentCallers_ShareOneRun() async {

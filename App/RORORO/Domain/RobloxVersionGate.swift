@@ -71,20 +71,69 @@ public actor RobloxVersionGate {
 
     private let appPath: String
     private let cacheTTL: TimeInterval
+    nonisolated(unsafe) private let defaults: UserDefaults
     private var cachedLive: (version: String, fetchedAt: Date)?
 
     /// `cacheTTL` bounds how often the live version is re-fetched. A
     /// group launch of N accounts should cost one request, not N.
-    public init(appPath: String, cacheTTL: TimeInterval = 300) {
+    public init(appPath: String, cacheTTL: TimeInterval = 300, defaults: UserDefaults = .standard) {
         self.appPath = appPath
         self.cacheTTL = cacheTTL
+        self.defaults = defaults
     }
 
     // MARK: - Pure pieces
 
-    public nonisolated static func verdict(local: String?, live: String?) -> Verdict {
+    /// Stale only when local is numerically BEHIND live. A local build
+    /// ahead of live (a beta channel, or a CDN that hasn't caught up) is
+    /// not something opening Roblox can fix, so it counts as current.
+    /// A (local, live) pair Roblox has already declined to update counts
+    /// as current too; see `declinedPair`.
+    public nonisolated static func verdict(
+        local: String?,
+        live: String?,
+        declined: (local: String, live: String)? = nil
+    ) -> Verdict {
         guard let local, let live else { return .unknown }
-        return local == live ? .current : .stale(local: local, live: live)
+        if let declined, declined.local == local, declined.live == live { return .current }
+        return isBehind(local, live) ? .stale(local: local, live: live) : .current
+    }
+
+    /// Component-wise numeric compare of dotted builds
+    /// (`0.726.0.7261140` < `0.738.0.7381393`). Missing components are 0.
+    /// A non-numeric component falls back to string inequality, so an
+    /// unparseable pair still gates the way the original equality check did.
+    public nonisolated static func isBehind(_ local: String, _ live: String) -> Bool {
+        let l = local.split(separator: ".").map { Int($0) }
+        let r = live.split(separator: ".").map { Int($0) }
+        guard !l.contains(nil), !r.contains(nil) else { return local != live }
+        let a = l.compactMap { $0 }, b = r.compactMap { $0 }
+        for i in 0..<max(a.count, b.count) {
+            let x = i < a.count ? a[i] : 0
+            let y = i < b.count ? b[i] : 0
+            if x != y { return x < y }
+        }
+        return false
+    }
+
+    // MARK: - Declined updates (support case 2026-11-19)
+    //
+    // clientsettingscdn can report a MacPlayer build that Roblox itself
+    // won't install yet (a staged or non-forced rollout). Opening Roblox
+    // then changes nothing, and before this memo every Launch As tripped
+    // the gate again: a dead end. Once Roblox has been opened and has
+    // declined to move off `local`, that exact pair launches. A new
+    // install or a new live version clears it by not matching.
+
+    public static let declinedDefaultsKey = "RobloxVersionGate.declinedPair"
+
+    public nonisolated static func declinedPair(defaults: UserDefaults = .standard) -> (local: String, live: String)? {
+        guard let pair = defaults.stringArray(forKey: declinedDefaultsKey), pair.count == 2 else { return nil }
+        return (pair[0], pair[1])
+    }
+
+    public nonisolated static func recordDeclined(local: String, live: String, defaults: UserDefaults = .standard) {
+        defaults.set([local, live], forKey: declinedDefaultsKey)
     }
 
     /// `CFBundleShortVersionString` of the bundle at `appPath`, or nil if
@@ -137,6 +186,6 @@ public actor RobloxVersionGate {
         let local = Self.localVersion(appPath: appPath)
         guard local != nil else { return .unknown }
         let live = await liveVersion()
-        return Self.verdict(local: local, live: live)
+        return Self.verdict(local: local, live: live, declined: Self.declinedPair(defaults: defaults))
     }
 }

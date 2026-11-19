@@ -39,6 +39,11 @@ public actor RobloxUpdateDriver {
         case alreadyCurrent
         /// Roblox updated itself and the relaunched player was dismissed.
         case updated(to: String)
+        /// Roblox was opened and never moved off the installed build:
+        /// live is ahead but Roblox won't install it yet (a staged or
+        /// non-forced rollout). The pair is recorded with the gate so
+        /// the replayed launch goes through. Support case 2026-11-19.
+        case declinedByRoblox(local: String, live: String)
         /// Parity never arrived inside `timeout`.
         case timedOut(local: String?, live: String?)
         /// The live version couldn't be fetched — can't judge parity.
@@ -50,7 +55,7 @@ public actor RobloxUpdateDriver {
         /// text to show instead.
         public var failureMessage: String? {
             switch self {
-            case .alreadyCurrent, .updated:
+            case .alreadyCurrent, .updated, .declinedByRoblox:
                 return nil
             case .timedOut(let local, let live):
                 let installed = local ?? "unknown"
@@ -74,19 +79,23 @@ public actor RobloxUpdateDriver {
         /// Returns how many were asked to terminate.
         public var terminateCanonicalPlayer: @Sendable () -> Int
         public var sleeper: Sleeper
+        /// Remember a pair Roblox declined, so the gate lets it launch.
+        public var recordDeclined: @Sendable (_ local: String, _ live: String) -> Void
 
         public init(
             localVersion: @escaping @Sendable () -> String?,
             liveVersion: @escaping @Sendable () async -> String?,
             openRoblox: @escaping @Sendable () async throws -> Void,
             terminateCanonicalPlayer: @escaping @Sendable () -> Int,
-            sleeper: Sleeper
+            sleeper: Sleeper,
+            recordDeclined: @escaping @Sendable (_ local: String, _ live: String) -> Void = { _, _ in }
         ) {
             self.localVersion = localVersion
             self.liveVersion = liveVersion
             self.openRoblox = openRoblox
             self.terminateCanonicalPlayer = terminateCanonicalPlayer
             self.sleeper = sleeper
+            self.recordDeclined = recordDeclined
         }
 
         public static let production = Dependencies(
@@ -94,7 +103,8 @@ public actor RobloxUpdateDriver {
             liveVersion: { await RobloxVersionGate.shared.liveVersion() },
             openRoblox: { try Self.openCanonicalRoblox() },
             terminateCanonicalPlayer: { Self.terminateCanonicalPlayers() },
-            sleeper: TaskSleeper()
+            sleeper: TaskSleeper(),
+            recordDeclined: { local, live in RobloxVersionGate.recordDeclined(local: local, live: live) }
         )
 
         /// `/usr/bin/open -a /Applications/Roblox.app` with no URL. Same
@@ -150,6 +160,12 @@ public actor RobloxUpdateDriver {
         self.playerSettleGrace = playerSettleGrace
     }
 
+    /// nil local is treated as behind so a missing bundle never reads as current.
+    private static func behind(_ local: String?, _ live: String) -> Bool {
+        guard let local else { return true }
+        return RobloxVersionGate.isBehind(local, live)
+    }
+
     /// Drive the update. Joins an in-flight run if one exists.
     public func run() async -> Outcome {
         if let inFlight {
@@ -164,7 +180,8 @@ public actor RobloxUpdateDriver {
 
     private func perform() async -> Outcome {
         guard let live = await deps.liveVersion() else { return .liveUnknown }
-        if deps.localVersion() == live { return .alreadyCurrent }
+        let startLocal = deps.localVersion()
+        if !Self.behind(startLocal, live) { return .alreadyCurrent }
 
         do {
             try await deps.openRoblox()
@@ -178,11 +195,20 @@ public actor RobloxUpdateDriver {
         while true {
             try? await deps.sleeper.sleep(seconds: pollInterval)
             polls += 1
-            if deps.localVersion() == live { break }
+            if !Self.behind(deps.localVersion(), live) { break }
             // Two bounds: wall clock for production, poll count for
             // tests whose fake sleeper returns instantly.
             if Date() >= deadline || polls >= maxPolls {
-                return .timedOut(local: deps.localVersion(), live: live)
+                let nowLocal = deps.localVersion()
+                if let nowLocal, nowLocal == startLocal {
+                    // Roblox opened and stayed put: it isn't going to
+                    // install this build. Close the empty canonical
+                    // window we opened and let the launch through.
+                    deps.recordDeclined(nowLocal, live)
+                    _ = deps.terminateCanonicalPlayer()
+                    return .declinedByRoblox(local: nowLocal, live: live)
+                }
+                return .timedOut(local: nowLocal, live: live)
             }
         }
 

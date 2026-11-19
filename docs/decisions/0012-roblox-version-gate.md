@@ -57,3 +57,15 @@ Concurrent callers (a group launch where every account tripped the gate) join on
 
 - `RobloxVersionGateTests` × 12: pure verdict, wire decode, plist read against a fake bundle, preflight stale / current / endpoint-down (fail-open) via `URLProtocolStub`, TTL cache, message contents.
 - Manual: the reproduction above, run with two ad-hoc re-signed copies of a stale bundle, before the gate existed.
+
+## Amendment 2026-11-19 — the gate needs an exit
+
+A user reported RORORO unusable: it kept opening Roblox to update, and Roblox never updated. `clientsettingscdn`'s MacPlayer `version` can run ahead of what the player will install (staged or non-forced rollouts). With strict equality, the driver opened Roblox, nothing changed, it timed out after 180 s, and the next Launch As tripped the gate again, forever.
+
+- `verdict` is stale only when local is numerically **behind** live. A local build ahead of live is current.
+- When the driver's timeout passes and the installed build never moved, the outcome is `declinedByRoblox` (no failure message): the `(local, live)` pair is stored in UserDefaults (`RobloxVersionGate.declinedPair`), the canonical window it opened is closed, and the caller replays the launch. The gate treats that exact pair as current. A new install or a newer live build doesn't match, so the gate re-arms.
+- The Launch As alert gains **Launch Anyway**, which records the pair and launches without waiting out the timeout.
+
+Accepted risk: on a declined pair, copies launch a stale bundle. If Roblox then forces the update from inside a copy, the original installer-lock symptom can return for that one launch; the next one gates against the new pair.
+
+Follow-up: telling a decline apart from a slow download sooner than 180 s (for example, no installer process within N seconds of opening).
