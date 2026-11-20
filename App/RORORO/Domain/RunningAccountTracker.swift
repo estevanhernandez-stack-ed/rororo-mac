@@ -101,11 +101,7 @@ public final class RunningAccountTracker {
         // the second prefix, multi-instance launches go untracked and
         // the cycler/macros can't find their target windows.
         let running = NSWorkspace.shared.runningApplications
-            .filter { app in
-                let id = app.bundleIdentifier ?? ""
-                return id.hasPrefix("com.roblox")
-                    || id.hasPrefix("com.626labs.RORORO.instance.")
-            }
+            .filter { RobloxAppCopier.isRobloxProcess(bundleID: $0.bundleIdentifier) }
         let accounts = AccountStore.shared.accounts
         var added = 0
         NSLog("[RORORO] backfill: scanning \(running.count) running Roblox processes against \(accounts.count) accounts")

@@ -308,7 +308,7 @@ public final class MultiInstanceCoordinator {
         // Userinfo's NSWorkspaceApplicationKey carries the
         // NSRunningApplication; pull the pid before the object goes away.
         if let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-           app.bundleIdentifier?.hasPrefix("com.roblox") == true {
+           RobloxAppCopier.isRobloxProcess(bundleID: app.bundleIdentifier) {
             let pid = app.processIdentifier
             Task { @MainActor in
                 RunningAccountTracker.shared.unregister(pid: pid)
@@ -327,7 +327,7 @@ public final class MultiInstanceCoordinator {
 
     nonisolated private static func anyRobloxRunning() -> Bool {
         NSWorkspace.shared.runningApplications
-            .contains { $0.bundleIdentifier?.hasPrefix("com.roblox") == true }
+            .contains { RobloxAppCopier.isRobloxProcess(bundleID: $0.bundleIdentifier) }
     }
 
     /// PIDs of currently-running Roblox instances. Used as the baseline
@@ -338,7 +338,7 @@ public final class MultiInstanceCoordinator {
     nonisolated private static func runningRobloxPIDs() -> Set<pid_t> {
         Set(NSWorkspace.shared.runningApplications
             .lazy
-            .filter { $0.bundleIdentifier?.hasPrefix("com.roblox") == true }
+            .filter { RobloxAppCopier.isRobloxProcess(bundleID: $0.bundleIdentifier) }
             .map { $0.processIdentifier })
     }
 
@@ -379,7 +379,7 @@ public final class MultiInstanceCoordinator {
         while Date() < appearDeadline {
             let newApp = NSWorkspace.shared.runningApplications
                 .lazy
-                .filter { $0.bundleIdentifier?.hasPrefix("com.roblox") == true }
+                .filter { RobloxAppCopier.isRobloxProcess(bundleID: $0.bundleIdentifier) }
                 .first { !baseline.contains($0.processIdentifier) }
             if let newApp {
                 spawned = newApp
