@@ -73,7 +73,11 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.626labs.rororo-mac
         PRODUCT_NAME: RORORO
-        MARKETING_VERSION: "0.7.0"
+        # Release builds override both from the tag (MARKETING_VERSION) and
+        # `git rev-list --count HEAD` (CURRENT_PROJECT_VERSION); see
+        # .github/workflows/release.yml. Keep MARKETING_VERSION at the last
+        # shipped tag so local builds read true.
+        MARKETING_VERSION: "0.8.1"
         CURRENT_PROJECT_VERSION: "8"
         INFOPLIST_FILE: RORORO/Info.plist
         CODE_SIGN_ENTITLEMENTS: RORORO/RORORO.entitlements
