@@ -377,4 +377,37 @@ final class RobloxAppCopierTests: XCTestCase {
         // A token "executable" — never run; just file system filler.
         try Data().write(to: macOS.appendingPathComponent("FakeRoblox"))
     }
+
+    // MARK: - isRobloxProcess (FFlag cleanup + settle-wait filter)
+
+    func testIsRobloxProcess_MatchesCanonicalAndPerInstanceCopies() {
+        XCTAssertTrue(RobloxAppCopier.isRobloxProcess(bundleID: "com.roblox.RobloxPlayer"))
+        XCTAssertTrue(RobloxAppCopier.isRobloxProcess(bundleID: "com.roblox.RobloxStudio"))
+        XCTAssertTrue(RobloxAppCopier.isRobloxProcess(bundleID: RobloxAppCopier.makePerInstanceBundleID(accountSlug: "12345")))
+        XCTAssertTrue(RobloxAppCopier.isRobloxProcess(bundleID: RobloxAppCopier.makePerInstanceBundleID()))
+    }
+
+    func testIsRobloxProcess_RejectsRororoItselfAndOthers() {
+        XCTAssertFalse(RobloxAppCopier.isRobloxProcess(bundleID: "com.626labs.rororo-mac"), "RORORO's own process is not Roblox")
+        XCTAssertFalse(RobloxAppCopier.isRobloxProcess(bundleID: "com.apple.Safari"))
+        XCTAssertFalse(RobloxAppCopier.isRobloxProcess(bundleID: nil))
+        XCTAssertFalse(RobloxAppCopier.isRobloxProcess(bundleID: ""))
+    }
+
+    func testPerInstanceBundleIDs_CarryTheSharedPrefix() {
+        // The filter and the builder must agree, or cleanup stops firing again.
+        XCTAssertTrue(RobloxAppCopier.makePerInstanceBundleID(accountSlug: "abc").hasPrefix(RobloxAppCopier.perInstanceBundleIDPrefix))
+        XCTAssertTrue(RobloxAppCopier.makePerInstanceBundleID().hasPrefix(RobloxAppCopier.perInstanceBundleIDPrefix))
+    }
+
+    func testLastPerInstanceCopyExit_LeavesNoRobloxRunning() {
+        // Shape of the bug: with only copies running, the old filter saw
+        // "no Roblox" while they ran (settle-wait blind, cleanup on any app
+        // quit); the helper sees them, and sees none once they exit.
+        let running = ["com.626labs.rororo-mac", RobloxAppCopier.makePerInstanceBundleID(accountSlug: "1"), "com.apple.finder"]
+        XCTAssertTrue(running.contains { RobloxAppCopier.isRobloxProcess(bundleID: $0) })
+        XCTAssertFalse(running.contains { $0.hasPrefix("com.roblox") }, "the old filter was blind to copies")
+        let afterExit = ["com.626labs.rororo-mac", "com.apple.finder"]
+        XCTAssertFalse(afterExit.contains { RobloxAppCopier.isRobloxProcess(bundleID: $0) })
+    }
 }

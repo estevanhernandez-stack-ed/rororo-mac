@@ -93,10 +93,27 @@ public enum RobloxAppCopier {
         if let accountSlug, !accountSlug.isEmpty {
             let safe = slugifyForBundleID(accountSlug)
             if !safe.isEmpty {
-                return "com.626labs.RORORO.instance.uid\(safe)"
+                return "\(perInstanceBundleIDPrefix)uid\(safe)"
             }
         }
-        return "com.626labs.RORORO.instance.\(UUID().uuidString.lowercased())"
+        return "\(perInstanceBundleIDPrefix)\(UUID().uuidString.lowercased())"
+    }
+
+    /// Every per-instance copy's bundle ID starts with this (ADR 0009).
+    public static let perInstanceBundleIDPrefix = "com.626labs.RORORO.instance."
+
+    /// True for any running Roblox process: the canonical
+    /// `com.roblox.*` apps AND our per-instance copies. Use this, not a
+    /// bare `hasPrefix("com.roblox")`, wherever "is Roblox running" or
+    /// "which pid is Roblox" matters. The bare check is blind to every
+    /// multi-instance copy: the launch settle-wait always ran out its 8 s
+    /// timeout without finding the spawned pid, exited copies were never
+    /// unregistered from RunningAccountTracker, and FFlag cleanup fired on
+    /// any app quit while copies were still running instead of after the
+    /// last one exited.
+    public static func isRobloxProcess(bundleID: String?) -> Bool {
+        guard let bundleID else { return false }
+        return bundleID.hasPrefix("com.roblox") || bundleID.hasPrefix(perInstanceBundleIDPrefix)
     }
 
     /// Lowercase + restrict to `[a-z0-9-]` (the safe subset for reverse-

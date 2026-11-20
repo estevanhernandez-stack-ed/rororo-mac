@@ -153,7 +153,8 @@ public final class WindowLayoutViewModel {
         return NSScreen.main?.visibleFrame ?? .zero
     }
 
-    /// Enumerate running com.roblox.* processes whose pids are NOT in
+    /// Enumerate running Roblox processes (canonical or per-instance copy,
+    /// via RobloxAppCopier.isRobloxProcess) whose pids are NOT in
     /// `excluding` (the RORORO-tracked set). These are externally-launched
     /// Roblox windows — e.g. the user's pre-existing grinding session.
     /// Same bundle-id prefix convention used by MultiInstanceCoordinator
@@ -161,8 +162,8 @@ public final class WindowLayoutViewModel {
     private static func enumerateExternalRobloxPids(excluding: Set<pid_t>) -> [pid_t] {
         NSWorkspace.shared.runningApplications
             .filter { app in
-                guard let bid = app.bundleIdentifier else { return false }
-                return bid.hasPrefix("com.roblox") && !excluding.contains(app.processIdentifier)
+                RobloxAppCopier.isRobloxProcess(bundleID: app.bundleIdentifier)
+                    && !excluding.contains(app.processIdentifier)
             }
             .map(\.processIdentifier)
     }
